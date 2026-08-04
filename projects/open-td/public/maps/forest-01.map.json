@@ -1,7 +1,7 @@
 {
   "id": "forest-01",
   "grid": { "cols": 32, "rows": 24, "cell": "square" },
-  "heart": { "x": 16, "y": 12 },
+  "chateau": { "x": 16, "y": 12 },
   "spawns": [{ "id": "s1", "x": 0, "y": 12 }],
   "paths": [
     {

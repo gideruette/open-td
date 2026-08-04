@@ -1,7 +1,7 @@
 {
   "id": "montagne-04",
   "grid": { "cols": 40, "rows": 30, "cell": "square" },
-  "heart": { "x": 20, "y": 15 },
+  "chateau": { "x": 20, "y": 15 },
   "spawns": [
     { "id": "s1", "x": 0, "y": 5 },
     { "id": "s2", "x": 0, "y": 15 },

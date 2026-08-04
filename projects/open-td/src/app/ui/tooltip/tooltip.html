@@ -1,0 +1,16 @@
+<div class="otd-tooltip" role="tooltip">
+  <p class="otd-tooltip__heading">{{ heading() }}</p>
+  @if (description()) {
+    <p class="otd-tooltip__description">{{ description() }}</p>
+  }
+  @if (stats().length > 0) {
+    <ul class="otd-tooltip__stats">
+      @for (stat of stats(); track stat.label) {
+        <li>
+          <span class="otd-tooltip__stat-label">{{ stat.label }}</span>
+          <span class="otd-tooltip__stat-value">{{ stat.value }}</span>
+        </li>
+      }
+    </ul>
+  }
+</div>

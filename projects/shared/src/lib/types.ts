@@ -1,7 +1,7 @@
 /** Phase active de la run. */
 export type GamePhase = 'defense' | 'attack' | 'resolution';
 
-export type CellKind = 'empty' | 'path' | 'obstacle' | 'heart';
+export type CellKind = 'empty' | 'path' | 'obstacle' | 'chateau';
 
 export interface GridCoord {
   x: number;
@@ -21,6 +21,8 @@ export interface TowerInstance {
 export interface TowerType {
   id: string;
   name: string;
+  /** Texte descriptif affiché dans les infobulles. */
+  description: string;
   /** Coût de construction (niveau 1). */
   cost: number;
   /** Portée en cases de grille. */
@@ -43,6 +45,8 @@ export interface TowerType {
 export interface MonsterType {
   id: string;
   name: string;
+  /** Texte descriptif affiché dans les infobulles. */
+  description: string;
   /** Coût en budget d'attaque. */
   cost: number;
   hp: number;
@@ -50,15 +54,15 @@ export interface MonsterType {
   speed: number;
   /** Blindé : cible privilégiée des tours anti-blindé (bonus de dégâts). */
   armored: boolean;
-  /** Dégâts infligés au cœur si le monstre atteint la fin du chemin. */
-  heartDamage: number;
+  /** Dégâts infligés au château si le monstre atteint la fin du chemin. */
+  chateauDamage: number;
 }
 
 /** Raison de rejet d'un placement (ou déplacement) de tour. */
 export type PlacementFailureReason =
   | 'map-not-loaded'
   | 'out-of-bounds'
-  | 'heart-cell'
+  | 'chateau-cell'
   | 'border-cell'
   | 'occupied'
   | 'insufficient-budget'
@@ -80,11 +84,13 @@ export interface MapSpawn extends GridCoord {
 }
 
 /**
- * Itinéraire spawn → cœur (nœuds en coordonnées de grille), soit l'un des chemins
+ * Itinéraire spawn → château (nœuds en coordonnées de grille), soit l'un des chemins
  * prédéfinis de la carte, soit un tracé libre dessiné par l'attaquant (CONCEPTION.md §5.3).
  */
 export interface MapPath {
   id: string;
+  /** Nom lisible donné par le joueur (tracés libres uniquement) ; sinon l'id sert d'étiquette. */
+  name?: string;
   nodes: Array<[number, number]>;
 }
 
@@ -103,7 +109,7 @@ export interface Wave {
 export interface GameMap {
   id: string;
   grid: { cols: number; rows: number; cell: 'square' };
-  heart: GridCoord;
+  chateau: GridCoord;
   spawns: MapSpawn[];
   paths: MapPath[];
 }
@@ -120,7 +126,7 @@ export interface StartingData {
   startingDefenseBudget: number;
   startingAttackBudget: number;
   budgetGrowth: BudgetGrowth;
-  /** PV du cœur au début d'une épreuve de défense. */
-  heartHp: number;
+  /** PV du château au début d'une épreuve de défense. */
+  chateauHp: number;
   initialWave: Wave;
 }

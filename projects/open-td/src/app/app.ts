@@ -2,10 +2,11 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { GameBoard } from './game-board/game-board';
 import { MapSelect } from './map-select/map-select';
+import { HelpModal } from './ui/help-modal/help-modal';
 
 @Component({
   selector: 'otd-root',
-  imports: [RouterOutlet, GameBoard, MapSelect],
+  imports: [RouterOutlet, GameBoard, MapSelect, HelpModal],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -13,6 +14,7 @@ import { MapSelect } from './map-select/map-select';
 export class App {
   protected readonly title = signal('Open TD');
   protected readonly selectedMapId = signal<string | undefined>(undefined);
+  protected readonly helpOpen = signal(false);
 
   protected onMapChosen(mapId: string): void {
     this.selectedMapId.set(mapId);
@@ -20,5 +22,13 @@ export class App {
 
   protected backToMenu(): void {
     this.selectedMapId.set(undefined);
+  }
+
+  protected openHelp(): void {
+    this.helpOpen.set(true);
+  }
+
+  protected closeHelp(): void {
+    this.helpOpen.set(false);
   }
 }

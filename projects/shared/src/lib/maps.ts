@@ -53,9 +53,21 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingDefenseBudget: 70,
       startingAttackBudget: 50,
       budgetGrowth: { defense: 30, attack: 20 },
-      heartHp: 5,
+      chateauHp: 5,
       initialWave: {
         lanes: [
+          {
+            path: {
+              id: 'nord',
+              nodes: [
+                [0, 6],
+                [0, 2],
+                [8, 2],
+                [8, 6],
+              ],
+            },
+            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }],
+          },
           {
             path: {
               id: 'sud',
@@ -75,7 +87,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'forest-01',
     name: 'Forêt',
-    description: 'Un spawn, deux chemins en tenailles autour du cœur.',
+    description: 'Un spawn, deux chemins en tenailles autour du château.',
     difficulty: 'modérée',
     biome: 'foret',
     grid: { cols: 32, rows: 24 },
@@ -84,7 +96,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingDefenseBudget: 100,
       startingAttackBudget: 80,
       budgetGrowth: { defense: 40, attack: 30 },
-      heartHp: 5,
+      chateauHp: 5,
       initialWave: {
         lanes: [
           {
@@ -121,7 +133,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingDefenseBudget: 130,
       startingAttackBudget: 100,
       budgetGrowth: { defense: 45, attack: 35 },
-      heartHp: 6,
+      chateauHp: 6,
       initialWave: {
         lanes: [
           {
@@ -148,7 +160,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingDefenseBudget: 140,
       startingAttackBudget: 110,
       budgetGrowth: { defense: 48, attack: 38 },
-      heartHp: 6,
+      chateauHp: 6,
       initialWave: {
         lanes: [
           {
@@ -191,7 +203,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingDefenseBudget: 160,
       startingAttackBudget: 120,
       budgetGrowth: { defense: 50, attack: 40 },
-      heartHp: 7,
+      chateauHp: 7,
       initialWave: {
         lanes: [
           {

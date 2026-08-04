@@ -8,7 +8,7 @@ const p2: MapPath = { id: 'p2', nodes: [[3, 0], [3, 3]] };
 const map: GameMap = {
   id: 'test-map',
   grid: { cols: 6, rows: 6, cell: 'square' },
-  heart: { x: 3, y: 3 },
+  chateau: { x: 3, y: 3 },
   spawns: [{ id: 's1', x: 0, y: 3 }],
   paths: [p1, p2],
 };
@@ -27,7 +27,7 @@ function makeStartingData(overrides: Partial<StartingData> = {}): StartingData {
     startingDefenseBudget: 100,
     startingAttackBudget: 80,
     budgetGrowth: { defense: 40, attack: 30 },
-    heartHp: 100,
+    chateauHp: 100,
     initialWave: wave(lane([{ type: 'goblin' }])),
     ...overrides,
   };
@@ -95,13 +95,13 @@ describe('GameEngine', () => {
       });
     });
 
-    it('rejects placement on the heart cell', () => {
+    it('rejects placement on the chateau cell', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
 
       expect(engine.placeTower('archer', { x: 3, y: 3 })).toEqual({
         ok: false,
-        reason: 'heart-cell',
+        reason: 'chateau-cell',
       });
     });
 
@@ -234,6 +234,46 @@ describe('GameEngine', () => {
       expect(engine.getRemainingBudget()).toBe(before - 10); // 20 - floor(20 * 0.5)
     });
 
+    it('rejects a move that would push the remaining budget below zero', () => {
+      const engine = new GameEngine();
+      engine.startRun(
+        map,
+        makeStartingData({ startingDefenseBudget: 20, budgetGrowth: { defense: 0, attack: 0 } }),
+      );
+      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, remaining budget -> 0
+      const towerId = engine.getTowers()[0].id;
+
+      engine.resolveDefenseSuccess();
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, no budget growth
+
+      expect(engine.getRemainingBudget()).toBe(0);
+
+      const result = engine.moveTower(towerId, { x: 2, y: 2 });
+
+      expect(result).toEqual({ ok: false, reason: 'insufficient-budget' });
+      expect(engine.getRemainingBudget()).toBe(0); // unchanged, never dips below zero
+      expect(engine.getTowers()[0].position).toEqual({ x: 1, y: 1 }); // tower not moved
+    });
+
+    it('allows a move whose forfeited value exactly matches the remaining budget', () => {
+      const engine = new GameEngine();
+      engine.startRun(
+        map,
+        makeStartingData({ startingDefenseBudget: 30, budgetGrowth: { defense: 0, attack: 0 } }),
+      );
+      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, remaining budget -> 10
+      const towerId = engine.getTowers()[0].id;
+
+      engine.resolveDefenseSuccess();
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, no budget growth
+
+      // Forfeit on move = 20 - floor(20 * 0.5) = 10, exactly the remaining budget.
+      const result = engine.moveTower(towerId, { x: 2, y: 2 });
+
+      expect(result).toEqual({ ok: true });
+      expect(engine.getRemainingBudget()).toBe(0);
+    });
+
     it('rejects a move onto a cell already occupied by another tower', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
@@ -244,13 +284,13 @@ describe('GameEngine', () => {
       expect(engine.moveTower(towerId, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'occupied' });
     });
 
-    it('rejects a move onto the heart cell', () => {
+    it('rejects a move onto the chateau cell', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
 
-      expect(engine.moveTower(towerId, { x: 3, y: 3 })).toEqual({ ok: false, reason: 'heart-cell' });
+      expect(engine.moveTower(towerId, { x: 3, y: 3 })).toEqual({ ok: false, reason: 'chateau-cell' });
     });
 
     it('rejects a move onto a border cell', () => {
@@ -296,7 +336,7 @@ describe('GameEngine', () => {
 
     it('runs vagueCourante against the current fortress', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ initialWave: wave(lane([])), heartHp: 5 }));
+      engine.startRun(map, makeStartingData({ initialWave: wave(lane([])), chateauHp: 5 }));
 
       const trial = engine.startDefenseTrial();
 

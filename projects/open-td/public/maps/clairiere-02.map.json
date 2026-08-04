@@ -1,7 +1,7 @@
 {
   "id": "clairiere-02",
   "grid": { "cols": 16, "rows": 12, "cell": "square" },
-  "heart": { "x": 8, "y": 6 },
+  "chateau": { "x": 8, "y": 6 },
   "spawns": [{ "id": "s1", "x": 0, "y": 6 }],
   "paths": [
     {

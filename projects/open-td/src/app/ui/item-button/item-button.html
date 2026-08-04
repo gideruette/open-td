@@ -1,0 +1,17 @@
+<button
+  type="button"
+  class="otd-item-button"
+  [class.otd-item-button--selected]="selected()"
+  [disabled]="disabled()"
+  (click)="clicked.emit($event)"
+>
+  <img class="otd-item-button__sprite" [src]="spriteSrc()" alt="" />
+  <span class="otd-item-button__name">{{ label() }}</span>
+  <span class="otd-item-button__meta">{{ meta() }}</span>
+  <otd-tooltip
+    class="otd-item-button__tooltip"
+    [heading]="label()"
+    [description]="description()"
+    [stats]="stats()"
+  ></otd-tooltip>
+</button>

@@ -14,8 +14,8 @@ export function isWithinGrid(map: GameMap, coord: GridCoord): boolean {
   return coord.x >= 0 && coord.y >= 0 && coord.x < map.grid.cols && coord.y < map.grid.rows;
 }
 
-export function isHeartCell(map: GameMap, coord: GridCoord): boolean {
-  return map.heart.x === coord.x && map.heart.y === coord.y;
+export function isChateauCell(map: GameMap, coord: GridCoord): boolean {
+  return map.chateau.x === coord.x && map.chateau.y === coord.y;
 }
 
 /** Une case de bord (première/dernière ligne ou colonne) : jamais constructible. */
@@ -47,7 +47,7 @@ export function spentBudget(
 }
 
 /**
- * Règles géométriques d'occupation d'une case (grille, cœur, bord, occupation par une autre
+ * Règles géométriques d'occupation d'une case (grille, château, bord, occupation par une autre
  * tour), sans le budget : réutilisable pour un déplacement, qui ne paie pas le coût plein
  * (CONCEPTION.md §4). Ne mute rien.
  */
@@ -62,8 +62,8 @@ export function canOccupyCell(
   if (!isWithinGrid(map, coord)) {
     return { ok: false, reason: 'out-of-bounds' };
   }
-  if (isHeartCell(map, coord)) {
-    return { ok: false, reason: 'heart-cell' };
+  if (isChateauCell(map, coord)) {
+    return { ok: false, reason: 'chateau-cell' };
   }
   if (isBorderCell(map, coord)) {
     return { ok: false, reason: 'border-cell' };

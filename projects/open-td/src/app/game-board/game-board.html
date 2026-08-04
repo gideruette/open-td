@@ -1,6 +1,13 @@
-<section class="board">
+<section class="board" [class.board--attack]="phase() === 'attack'">
   <header class="board__status">
-    <h1>Palier {{ palier() }} — {{ phase() === 'defense' ? 'Phase Défense' : 'Phase Attaque' }}</h1>
+    <h1>
+      <img
+        class="phase-icon"
+        [src]="phase() === 'defense' ? 'assets/sprites/shield-defense.svg' : 'assets/sprites/swords-attack.svg'"
+        alt=""
+      />
+      Palier {{ palier() }} — {{ phase() === 'defense' ? 'Phase Défense' : 'Phase Attaque' }}
+    </h1>
     @if (phase() === 'defense') {
       <p class="next-wave">Prochaine vague : {{ describeWave(vagueCourante()) }}</p>
     }
@@ -10,31 +17,31 @@
     <aside class="board__palette" aria-label="Tours disponibles">
       <h2>Tours</h2>
       @for (type of towerTypes; track type.id) {
-        <button
-          type="button"
-          class="tower-button"
-          [class.tower-button--selected]="selectedTypeId() === type.id"
+        <otd-item-button
+          [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
+          [label]="type.name"
+          [meta]="type.cost + ' · portée ' + type.range"
+          [description]="type.description"
+          [stats]="towerStats(type)"
+          [selected]="selectedTypeId() === type.id"
           [disabled]="isTrialRunning() || type.cost > remainingBudget()"
-          (click)="selectTowerType(type.id)"
-        >
-          <img class="tower-button__sprite" [src]="'assets/sprites/' + type.id + '.svg'" alt="" />
-          <span class="tower-button__name">{{ type.name }}</span>
-          <span class="tower-button__meta">{{ type.cost }} · portée {{ type.range }}</span>
-        </button>
+          (clicked)="selectTowerType(type.id)"
+        ></otd-item-button>
       }
 
-      <p class="budget">Budget : {{ remainingBudget() }} / {{ defenseBudgetTotal() }}</p>
+      <p class="budget">
+        <img class="budget__icon" src="assets/sprites/budget-defense.svg" alt="" />
+        Budget : {{ remainingBudget() }} / {{ defenseBudgetTotal() }}
+      </p>
 
       <h2>Épreuve</h2>
-      <p class="heart">Cœur : {{ trialHeartHp() ?? heartMaxHp() }} / {{ heartMaxHp() }}</p>
-      <button
-        type="button"
-        class="trial-button"
-        [disabled]="isTrialRunning() || !vagueCourante()"
-        (click)="startTrial()"
-      >
+      <p class="chateau">Château : {{ trialChateauHp() ?? chateauMaxHp() }} / {{ chateauMaxHp() }}</p>
+      <otd-button variant="success" [disabled]="isTrialRunning() || !vagueCourante()" (clicked)="startTrial()">
         {{ isTrialRunning() ? 'Épreuve en cours…' : 'Lancer l’épreuve' }}
-      </button>
+      </otd-button>
+      <otd-button variant="info" [disabled]="isTrialRunning()" (clicked)="resetDefenseSession()">
+        Réinitialiser la défense
+      </otd-button>
 
       @if (message()) {
         <p class="message">{{ message() }}</p>
@@ -44,30 +51,16 @@
     <aside class="board__palette" aria-label="Composition de la vague">
       <h2>Chemins</h2>
       @if (isDrawingPath()) {
-        <p class="message">Cliquez la grille : un spawn pour démarrer, puis des cases adjacentes jusqu’au cœur.</p>
+        <p class="message">Cliquez la grille : un spawn pour démarrer, puis des cases adjacentes jusqu’au château.</p>
         <div class="path-options">
-          <button type="button" (click)="undoLastTracePoint()">Annuler le dernier point</button>
-          <button type="button" (click)="cancelTracing()">Annuler le tracé</button>
+          <otd-button (clicked)="undoLastTracePoint()">Annuler le dernier point</otd-button>
+          <otd-button (clicked)="cancelTracing()">Annuler le tracé</otd-button>
         </div>
       } @else {
         <div class="path-options">
-          @for (path of map()?.paths ?? []; track path.id) {
-            <span class="path-option">
-              <button type="button" class="targeting-button" [disabled]="isTrialRunning()" (click)="addPresetLane(path)">
-                Utiliser « {{ path.id }} »
-              </button>
-              <button
-                type="button"
-                class="path-option__remove"
-                [disabled]="isTrialRunning()"
-                (click)="removePresetPath(path.id)"
-                aria-label="Supprimer ce chemin de la carte"
-              >×</button>
-            </span>
-          }
-          <button type="button" class="trace-button" [disabled]="isTrialRunning()" (click)="startTracing()">
+          <otd-button variant="info" [disabled]="isTrialRunning()" (clicked)="startTracing()">
             ✏️ Tracer un chemin
-          </button>
+          </otd-button>
         </div>
 
         <h2>Monstres</h2>
@@ -75,31 +68,35 @@
           <p class="message">Sélectionnez un chemin ci-dessous pour lui affecter des monstres.</p>
         }
         @for (type of monsterTypes; track type.id) {
-          <button
-            type="button"
-            class="tower-button"
+          <otd-item-button
+            [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
+            [label]="type.name"
+            [meta]="'' + type.cost"
+            [description]="type.description"
+            [stats]="monsterStats(type)"
             [disabled]="isTrialRunning() || activeLaneIndex() === undefined || type.cost > getAttackBudgetRemaining()"
-            (click)="appendMonster(type.id)"
-          >
-            <img class="tower-button__sprite" [src]="'assets/sprites/' + type.id + '.svg'" alt="" />
-            <span class="tower-button__name">{{ type.name }}</span>
-            <span class="tower-button__meta">{{ type.cost }}</span>
-          </button>
+            (clicked)="appendMonster(type.id)"
+          ></otd-item-button>
         }
       }
 
-      <p class="budget">Budget : {{ getAttackBudgetRemaining() }} / {{ attackBudgetTotal() }}</p>
+      <p class="budget">
+        <img class="budget__icon" src="assets/sprites/budget-attack.svg" alt="" />
+        Budget : {{ getAttackBudgetRemaining() }} / {{ attackBudgetTotal() }}
+      </p>
 
       <h2>Épreuve</h2>
-      <p class="heart">Brèches : {{ trialBreachCount() ?? 0 }}</p>
-      <button
-        type="button"
-        class="trial-button"
+      <p class="chateau">Brèches : {{ trialBreachCount() ?? 0 }}</p>
+      <otd-button
+        variant="success"
         [disabled]="isTrialRunning() || isDrawingPath() || lanes().length === 0"
-        (click)="startAttack()"
+        (clicked)="startAttack()"
       >
         {{ isTrialRunning() ? 'Attaque en cours…' : 'Lancer l’attaque' }}
-      </button>
+      </otd-button>
+      <otd-button variant="info" [disabled]="isTrialRunning() || isDrawingPath()" (clicked)="resetAttackPlan()">
+        Réinitialiser à la sauvegarde
+      </otd-button>
 
       @if (message() && !isDrawingPath()) {
         <p class="message">{{ message() }}</p>
@@ -107,13 +104,25 @@
     </aside>
   }
 
-  <canvas
-    #board
-    class="board__canvas"
-    (click)="onCanvasClick($event)"
-    (mousemove)="onCanvasMove($event)"
-    (mouseleave)="onCanvasLeave()"
-  ></canvas>
+  <div class="board__canvas-wrap">
+    <canvas
+      #board
+      class="board__canvas"
+      (click)="onCanvasClick($event)"
+      (mousemove)="onCanvasMove($event)"
+      (mouseleave)="onCanvasLeave()"
+    ></canvas>
+    @if (boardTooltip(); as tooltip) {
+      <otd-tooltip
+        class="board__tooltip"
+        [style.left.px]="tooltip.left"
+        [style.top.px]="tooltip.top"
+        [heading]="tooltip.heading"
+        [description]="tooltip.description"
+        [stats]="tooltip.stats"
+      ></otd-tooltip>
+    }
+  </div>
 
   @if (phase() === 'defense') {
     @if (selectedTower(); as tower) {
@@ -121,12 +130,10 @@
         <h2>{{ tower.typeId }}</h2>
         @if (isMovingTower()) {
           <p class="message">Cliquez une case libre pour déplacer la tour.</p>
-          <button type="button" (click)="cancelMovingTower()">Annuler le déplacement</button>
+          <otd-button (clicked)="cancelMovingTower()">Annuler le déplacement</otd-button>
         } @else {
-          <button type="button" class="move-button" (click)="startMovingTower()">Déplacer</button>
-          <button type="button" class="sell-button" (click)="sellSelected()">
-            Vendre (+{{ refundFor(tower) }})
-          </button>
+          <otd-button variant="info" (clicked)="startMovingTower()">Déplacer</otd-button>
+          <otd-button variant="danger" (clicked)="sellSelected()">Vendre (+{{ refundFor(tower) }})</otd-button>
         }
       </aside>
     }
@@ -134,21 +141,27 @@
     <aside class="board__targeting" aria-label="Voies de la vague">
       <h2>Voies</h2>
       @if (lanes().length === 0) {
-        <p class="message">Ajoutez un chemin (existant ou tracé) pour commencer.</p>
+        <p class="message">Tracez un chemin pour commencer.</p>
       }
       @for (lane of lanes(); track $index; let laneIndex = $index) {
         <div class="lane-card" [class.lane-card--selected]="activeLaneIndex() === laneIndex">
           <div class="lane-card__header">
-            <button type="button" class="lane-card__select" (click)="selectLane(laneIndex)">
-              {{ laneLabel(lane, laneIndex) }}
-            </button>
-            <button
-              type="button"
-              class="lane-card__remove"
-              (click)="removeLane(laneIndex)"
+            <input
+              #nameInput
+              type="text"
+              class="lane-card__name"
+              [value]="lane.path.name || laneLabel(lane, laneIndex)"
+              [attr.aria-label]="'Nom de la voie ' + (laneIndex + 1)"
+              (click)="selectLane(laneIndex)"
+              (change)="renameLane(laneIndex, nameInput.value)"
+            />
+            <otd-button
+              variant="danger"
+              size="sm"
               [disabled]="isTrialRunning()"
-              aria-label="Supprimer ce chemin"
-            >×</button>
+              (clicked)="removeLane(laneIndex)"
+              ariaLabel="Supprimer ce chemin"
+            >×</otd-button>
           </div>
 
           @if (lane.units.length === 0) {
@@ -159,24 +172,25 @@
               <li class="queue-item">
                 <span class="queue-item__name">{{ monsterName(unit.type) }}</span>
                 <span class="queue-item__actions">
-                  <button
-                    type="button"
-                    (click)="moveQueueUnit(laneIndex, unitIndex, -1)"
+                  <otd-button
+                    size="sm"
                     [disabled]="unitIndex === 0 || isTrialRunning()"
-                    aria-label="Monter"
-                  >↑</button>
-                  <button
-                    type="button"
-                    (click)="moveQueueUnit(laneIndex, unitIndex, 1)"
+                    (clicked)="moveQueueUnit(laneIndex, unitIndex, -1)"
+                    ariaLabel="Monter"
+                  >↑</otd-button>
+                  <otd-button
+                    size="sm"
                     [disabled]="unitIndex === lane.units.length - 1 || isTrialRunning()"
-                    aria-label="Descendre"
-                  >↓</button>
-                  <button
-                    type="button"
-                    (click)="removeQueueUnit(laneIndex, unitIndex)"
+                    (clicked)="moveQueueUnit(laneIndex, unitIndex, 1)"
+                    ariaLabel="Descendre"
+                  >↓</otd-button>
+                  <otd-button
+                    variant="danger"
+                    size="sm"
                     [disabled]="isTrialRunning()"
-                    aria-label="Retirer"
-                  >×</button>
+                    (clicked)="removeQueueUnit(laneIndex, unitIndex)"
+                    ariaLabel="Retirer"
+                  >×</otd-button>
                 </span>
               </li>
             }

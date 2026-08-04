@@ -1,0 +1,11 @@
+<button
+  type="button"
+  class="otd-button"
+  [class.otd-button--info]="variant() === 'info'"
+  [class.otd-button--success]="variant() === 'success'"
+  [class.otd-button--danger]="variant() === 'danger'"
+  [class.otd-button--sm]="size() === 'sm'"
+  [disabled]="disabled()"
+  [attr.aria-label]="ariaLabel()"
+  (click)="clicked.emit($event)"
+><ng-content></ng-content></button>

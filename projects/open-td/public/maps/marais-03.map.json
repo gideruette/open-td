@@ -1,7 +1,7 @@
 {
   "id": "marais-03",
   "grid": { "cols": 24, "rows": 18, "cell": "square" },
-  "heart": { "x": 12, "y": 9 },
+  "chateau": { "x": 12, "y": 9 },
   "spawns": [
     { "id": "s1", "x": 0, "y": 9 },
     { "id": "s2", "x": 23, "y": 9 }

@@ -1,0 +1,60 @@
+:host {
+  display: contents;
+}
+
+.otd-button {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #2a2f3a;
+  border-radius: 0.35rem;
+  background: #171a22;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: #1d212b;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.otd-button--sm {
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.otd-button--info {
+  border-color: #2a3f4a;
+  background: #142229;
+  color: #7be0ff;
+
+  &:hover:not(:disabled) {
+    background: #1a2e37;
+  }
+}
+
+.otd-button--success {
+  border-color: #2a4a2f;
+  background: #142a17;
+  color: #9de89f;
+
+  &:hover:not(:disabled) {
+    background: #1a3a1e;
+  }
+}
+
+.otd-button--danger {
+  border-color: #5a2a2a;
+  background: #2a1414;
+  color: #ff9a8a;
+
+  &:hover:not(:disabled) {
+    background: #3a1a1a;
+  }
+}

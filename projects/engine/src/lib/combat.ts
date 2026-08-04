@@ -27,17 +27,17 @@ export function selectTarget(
 }
 
 /**
- * Dégâts totaux qu'infligerait la vague au cœur si aucun monstre n'était arrêté, toutes voies confondues.
- * Le budget/`heartHp` d'une carte doit rester à ce niveau ou en dessous : une défense
- * absente ou inefficace doit pouvoir détruire le cœur (voir CONCEPTION.md §4, §6).
+ * Dégâts totaux qu'infligerait la vague au château si aucun monstre n'était arrêté, toutes voies confondues.
+ * Le budget/`chateauHp` d'une carte doit rester à ce niveau ou en dessous : une défense
+ * absente ou inefficace doit pouvoir détruire le château (voir CONCEPTION.md §4, §6).
  */
-export function totalHeartDamage(wave: Wave, monsterCatalog: readonly MonsterType[] = MONSTER_TYPES): number {
+export function totalChateauDamage(wave: Wave, monsterCatalog: readonly MonsterType[] = MONSTER_TYPES): number {
   return wave.lanes.reduce(
     (total, lane) =>
       total +
       lane.units.reduce((laneTotal, unit) => {
         const type = monsterCatalog.find((candidate) => candidate.id === unit.type);
-        return laneTotal + (type?.heartDamage ?? 0);
+        return laneTotal + (type?.chateauDamage ?? 0);
       }, 0),
     0,
   );
@@ -60,6 +60,8 @@ export function waveCost(wave: Wave, monsterCatalog: readonly MonsterType[] = MO
 export interface ShotEvent {
   towerPosition: GridCoord;
   targetPosition: GridCoord;
+  /** Rayon de la zone d'effet à l'impact, pour les tours à dégâts de zone (ex. Canon). */
+  splashRadius?: number;
 }
 
 /** Instance de monstre vivante pendant une épreuve de défense (état interne de simulation). */
@@ -78,8 +80,8 @@ export interface MonsterInstance {
 export type DefenseOutcome = 'pending' | 'success' | 'failure';
 
 /**
- * Camp du joueur pour cette simulation : `defense` (tenir vagueCourante, cœur qui survit)
- * ou `attack` (percer avec une vague composée, ≥1 monstre au cœur) — CONCEPTION.md §5.4.
+ * Camp du joueur pour cette simulation : `defense` (tenir vagueCourante, château qui survit)
+ * ou `attack` (percer avec une vague composée, ≥1 monstre au château) — CONCEPTION.md §5.4.
  * La mécanique de simulation (spawn, déplacement, tir, dégâts) est identique dans les deux
  * cas ; seule l'interprétation de la victoire/défaite change.
  */
@@ -98,12 +100,12 @@ const DEFAULT_MAX_TICKS = 20_000;
 /**
  * Simulation déterministe, tick par tick, d'une épreuve (défense ou attaque) : la vague
  * donnée — une ou plusieurs voies actives simultanément, CONCEPTION.md §5.3 — est envoyée
- * sur la forteresse (tours figées) jusqu'à ce que le cœur tombe, que toutes les voies soient
+ * sur la forteresse (tours figées) jusqu'à ce que le château tombe, que toutes les voies soient
  * entièrement traitées, ou qu'une brèche survienne.
  */
 export class DefenseSimulation {
   private tick = 0;
-  private heartHp: number;
+  private chateauHp: number;
   private monsters: MonsterInstance[] = [];
   private readonly lanes: LaneState[];
   private readonly towerCooldowns = new Map<string, number>();
@@ -115,7 +117,7 @@ export class DefenseSimulation {
   constructor(
     private readonly towers: readonly TowerInstance[],
     wave: Wave,
-    heartMaxHp: number,
+    chateauMaxHp: number,
     private readonly monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
     private readonly towerCatalog: readonly TowerType[] = TOWER_TYPES,
     private readonly ticksBetweenSpawns: number = DEFAULT_TICKS_BETWEEN_SPAWNS,
@@ -127,7 +129,7 @@ export class DefenseSimulation {
       spawnQueue: lane.units.map((unit) => unit.type),
       ticksSinceLastSpawn: 0,
     }));
-    this.heartHp = heartMaxHp;
+    this.chateauHp = chateauMaxHp;
     for (const tower of towers) {
       this.towerCooldowns.set(tower.id, 0);
     }
@@ -141,11 +143,11 @@ export class DefenseSimulation {
     return this.tick;
   }
 
-  getHeartHp(): number {
-    return this.heartHp;
+  getChateauHp(): number {
+    return this.chateauHp;
   }
 
-  /** Nombre de monstres ayant atteint le cœur jusqu'ici (condition de succès en attaque). */
+  /** Nombre de monstres ayant atteint le château jusqu'ici (condition de succès en attaque). */
   getBreachCount(): number {
     return this.breachCount;
   }
@@ -229,7 +231,11 @@ export class DefenseSimulation {
       if (!target) {
         continue;
       }
-      this.shotsThisTick.push({ towerPosition: tower.position, targetPosition: this.getMonsterPosition(target) });
+      this.shotsThisTick.push({
+        towerPosition: tower.position,
+        targetPosition: this.getMonsterPosition(target),
+        splashRadius: towerType.splashRadius,
+      });
       this.applyDamage(target, towerType);
       if (towerType.splashRadius) {
         const targetPos = this.getMonsterPosition(target);
@@ -284,7 +290,7 @@ export class DefenseSimulation {
     this.breachCount += arrived.length;
     for (const monster of arrived) {
       const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
-      this.heartHp -= type?.heartDamage ?? 0;
+      this.chateauHp -= type?.chateauDamage ?? 0;
     }
     this.monsters = this.monsters.filter(
       (monster) => monster.distance < this.lanes[monster.laneIndex].pathTotalLength,
@@ -305,7 +311,7 @@ export class DefenseSimulation {
       return;
     }
 
-    if (this.heartHp <= 0) {
+    if (this.chateauHp <= 0) {
       this.outcome = 'failure';
       return;
     }

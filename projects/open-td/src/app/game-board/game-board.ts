@@ -12,7 +12,7 @@ import {
   viewChild,
 } from '@angular/core';
 import type { DefenseOutcome, DefenseSimulation } from 'engine';
-import { GameEngine, cellsBetween, isHeartCell, isSpawnCell, isValidPathStep } from 'engine';
+import { GameEngine, cellsBetween, isChateauCell, isSpawnCell, isValidPathStep } from 'engine';
 import {
   BIOME_COLORS,
   MONSTER_TYPES,
@@ -22,12 +22,27 @@ import {
   findTowerType,
   sellRefund,
 } from 'shared';
-import type { GameMap, GamePhase, GridCoord, MapBiomeColors, MapPath, TowerInstance, Wave, WaveUnit } from 'shared';
+import type {
+  GameMap,
+  GamePhase,
+  GridCoord,
+  MapBiomeColors,
+  MapPath,
+  MonsterType,
+  TowerInstance,
+  TowerType,
+  Wave,
+  WaveUnit,
+} from 'shared';
+import { Button } from '../ui/button/button';
+import { ItemButton } from '../ui/item-button/item-button';
+import { Tooltip, type TooltipStat } from '../ui/tooltip/tooltip';
 
 const CELL_SIZE = 32;
 const TICK_INTERVAL_MS = 100;
 const PROJECTILE_DURATION_MS = 120;
-const SPRITE_IDS = ['archer', 'canon', 'glace', 'lance-pierres', 'goblin', 'orc', 'golem', 'heart'];
+const SPLASH_DURATION_MS = 220;
+const SPRITE_IDS = ['archer', 'canon', 'glace', 'catapulte', 'goblin', 'orc', 'golem', 'chateau'];
 const DEFAULT_BIOME_COLORS: MapBiomeColors = BIOME_COLORS.foret;
 
 /** Convertit une couleur hex (`#rrggbb`) en `rgba(...)` pour appliquer une transparence. */
@@ -39,7 +54,7 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Part des cases intérieures (hors bord, cœur, spawns) semées d'un élément de décor. */
+/** Part des cases intérieures (hors bord, château, spawns) semées d'un élément de décor. */
 const DECOR_DENSITY = 0.05;
 
 interface DecorItem {
@@ -67,12 +82,12 @@ function seededRandom(seed: number): () => number {
   };
 }
 
-/** Sème des éléments de décor sur les cases intérieures non spéciales (hors bord, cœur, spawns). */
+/** Sème des éléments de décor sur les cases intérieures non spéciales (hors bord, château, spawns). */
 function generateDecor(map: GameMap): DecorItem[] {
   const candidates: GridCoord[] = [];
   for (let y = 1; y < map.grid.rows - 1; y++) {
     for (let x = 1; x < map.grid.cols - 1; x++) {
-      if (isHeartCell(map, { x, y }) || isSpawnCell(map, { x, y })) {
+      if (isChateauCell(map, { x, y }) || isSpawnCell(map, { x, y })) {
         continue;
       }
       candidates.push({ x, y });
@@ -97,7 +112,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
   'map-not-loaded': 'Carte non chargée.',
   'unknown-tower-type': 'Type de tour inconnu.',
   'out-of-bounds': 'Case hors grille.',
-  'heart-cell': 'Impossible de construire sur le cœur.',
+  'chateau-cell': 'Impossible de construire sur le château.',
   'border-cell': 'Impossible de construire sur un bord de la grille.',
   occupied: 'Case déjà occupée par une tour.',
   'insufficient-budget': 'Budget insuffisant.',
@@ -111,9 +126,25 @@ interface MonsterView {
   typeId: string;
 }
 
+/** Infobulle positionnée au survol d'une tour posée ou d'un monstre, en pixels relatifs au canvas. */
+interface BoardTooltip {
+  left: number;
+  top: number;
+  heading: string;
+  description: string;
+  stats: TooltipStat[];
+}
+
 interface ProjectileView {
   from: GridCoord;
   to: GridCoord;
+  firedAtMs: number;
+}
+
+/** Explosion de zone à l'impact d'un tir à dégâts de zone (ex. Canon), affichée le temps de sa vie. */
+interface SplashView {
+  position: GridCoord;
+  radius: number;
   firedAtMs: number;
 }
 
@@ -135,7 +166,7 @@ interface LaneDraft {
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [],
+  imports: [Button, ItemButton, Tooltip],
   templateUrl: './game-board.html',
   styleUrl: './game-board.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -155,6 +186,7 @@ export class GameBoard implements OnInit {
   protected readonly biomeColors = signal<MapBiomeColors>(DEFAULT_BIOME_COLORS);
   protected readonly decor = signal<readonly DecorItem[]>([]);
   private projectiles: ProjectileView[] = [];
+  private splashes: SplashView[] = [];
   private projectileAnimationHandle: number | undefined;
   private customLaneSequence = 0;
 
@@ -176,17 +208,20 @@ export class GameBoard implements OnInit {
   protected readonly phase = signal<GamePhase>('defense');
   protected readonly palier = signal(1);
   protected readonly vagueCourante = signal<Wave | undefined>(undefined);
-  protected readonly heartMaxHp = signal(0);
+  protected readonly chateauMaxHp = signal(0);
 
   protected readonly lanes = signal<LaneDraft[]>([]);
   protected readonly activeLaneIndex = signal<number | undefined>(undefined);
   /** Points déjà cliqués du tracé en cours ; `undefined` = pas en train de tracer. */
   protected readonly drawingPath = signal<GridCoord[] | undefined>(undefined);
 
-  protected readonly trialHeartHp = signal<number | undefined>(undefined);
+  protected readonly trialChateauHp = signal<number | undefined>(undefined);
   protected readonly trialBreachCount = signal<number | undefined>(undefined);
   protected readonly trialMonsters = signal<readonly MonsterView[]>([]);
   protected readonly trialOutcome = signal<DefenseOutcome | undefined>(undefined);
+
+  /** Infobulle affichée au survol d'une tour posée ou d'un monstre sur le plateau. */
+  protected readonly boardTooltip = signal<BoardTooltip | undefined>(undefined);
 
   protected readonly selectedTower = computed(() =>
     this.towers().find((tower) => tower.id === this.selectedTowerId()),
@@ -219,7 +254,7 @@ export class GameBoard implements OnInit {
       this.activeLaneIndex();
       this.drawingPath();
       this.trialMonsters();
-      this.trialHeartHp();
+      this.trialChateauHp();
       this.spriteVersion();
       this.biomeColors();
       this.decor();
@@ -280,6 +315,18 @@ export class GameBoard implements OnInit {
     this.message.set(undefined);
   }
 
+  /** Abandonne les poses/ventes/déplacements de la phase Défense en cours et revient à la forteresse de départ. */
+  protected resetDefenseSession(): void {
+    if (this.phase() !== 'defense' || this.isTrialRunning()) {
+      return;
+    }
+    this.engine.resetDefenseSession();
+    this.selectedTowerId.set(undefined);
+    this.movingTowerId.set(undefined);
+    this.message.set(undefined);
+    this.syncFromEngine();
+  }
+
   /** Prix de revente : plein tarif si posée ce palier-ci, réduit si héritée d'un palier précédent. */
   protected refundFor(tower: TowerInstance): number {
     const type = findTowerType(tower.typeId);
@@ -313,32 +360,13 @@ export class GameBoard implements OnInit {
     this.selectedTowerId.set(undefined);
     this.message.set(undefined);
     this.activeTrial = this.engine.startDefenseTrial();
-    this.trialHeartHp.set(this.activeTrial.getHeartHp());
+    this.trialChateauHp.set(this.activeTrial.getChateauHp());
     this.trialMonsters.set([]);
     this.trialOutcome.set(this.activeTrial.getOutcome());
     this.scheduleTrialTick();
   }
 
   // ---- Phase Attaque : composition des voies ---------------------------
-
-  /** Ajoute une nouvelle voie reprenant un chemin prédéfini de la carte. */
-  protected addPresetLane(path: MapPath): void {
-    if (this.phase() !== 'attack' || this.isTrialRunning() || this.isDrawingPath()) {
-      return;
-    }
-    this.lanes.update((lanes) => [...lanes, { path: { id: path.id, nodes: [...path.nodes] }, units: [] }]);
-    this.activeLaneIndex.set(this.lanes().length - 1);
-    this.message.set(undefined);
-  }
-
-  /** Supprime un chemin prédéfini de la carte : il n'apparaîtra plus en Défense ni en Attaque. */
-  protected removePresetPath(pathId: string): void {
-    if (this.isTrialRunning()) {
-      return;
-    }
-    this.engine.removePath(pathId);
-    this.syncFromEngine();
-  }
 
   /**
    * Démarre le tracé libre d'une nouvelle voie. Avec un seul spawn sur la carte (cas courant),
@@ -353,7 +381,7 @@ export class GameBoard implements OnInit {
     const spawns = this.map()?.spawns ?? [];
     if (spawns.length === 1) {
       this.drawingPath.set([{ x: spawns[0].x, y: spawns[0].y }]);
-      this.message.set('Cliquez des cases adjacentes jusqu’au cœur.');
+      this.message.set('Cliquez des cases adjacentes jusqu’au château.');
       return;
     }
     this.drawingPath.set([]);
@@ -376,23 +404,38 @@ export class GameBoard implements OnInit {
     this.activeLaneIndex.set(index);
   }
 
+  /** Supprime une voie : son tracé disparaît aussi de la carte (plus de référence fantôme au dessin). */
   protected removeLane(index: number): void {
     if (this.isTrialRunning()) {
       return;
     }
-    for (const unit of this.lanes()[index]?.units ?? []) {
+    const lane = this.lanes()[index];
+    if (!lane) {
+      return;
+    }
+    for (const unit of lane.units) {
       this.engine.recordAttackUnitRemoval(unit.type, unit.addedAtAttempt);
     }
+    this.engine.removePath(lane.path.id);
     this.lanes.update((lanes) => lanes.filter((_, i) => i !== index));
     if (this.activeLaneIndex() === index) {
       this.activeLaneIndex.set(undefined);
     }
+    this.syncFromEngine();
   }
 
   protected laneLabel(lane: LaneDraft, index: number): string {
-    const isPreset = this.map()?.paths.some((path) => path.id === lane.path.id) ?? false;
-    const kind = isPreset ? lane.path.id : `tracé, ${lane.path.nodes.length} cases`;
-    return `Chemin ${index + 1} — ${kind}`;
+    return `Chemin ${index + 1} — tracé, ${lane.path.nodes.length} cases`;
+  }
+
+  /** Renomme une voie ; nom vide = retour à l'étiquette par défaut. */
+  protected renameLane(index: number, rawName: string): void {
+    const name = rawName.trim();
+    this.lanes.update((lanes) =>
+      lanes.map((lane, i) =>
+        i === index ? { ...lane, path: { ...lane.path, name: name || undefined } } : lane,
+      ),
+    );
   }
 
   protected appendMonster(typeId: string): void {
@@ -407,7 +450,9 @@ export class GameBoard implements OnInit {
     const addedAtAttempt = this.engine.getAttackAttempt();
     this.lanes.update((lanes) =>
       lanes.map((lane, i) =>
-        i === laneIndex ? { ...lane, units: [...lane.units, { type: typeId, addedAtAttempt }] } : lane,
+        i === laneIndex
+          ? { ...lane, units: [...lane.units, { type: typeId, addedAtAttempt }] }
+          : lane,
       ),
     );
   }
@@ -451,6 +496,25 @@ export class GameBoard implements OnInit {
     return findMonsterType(typeId)?.name ?? typeId;
   }
 
+  /** Recharge les voies en cours de composition depuis le plan d'attaque sauvegardé par le moteur. */
+  private loadAttackPlan(): LaneDraft[] {
+    return this.engine.getAttackPlan().lanes.map((lane) => ({
+      path: lane.path,
+      units: lane.units.map((unit) => ({ ...unit, addedAtAttempt: 0 })),
+    }));
+  }
+
+  /** Abandonne les modifications en cours et revient au plan d'attaque sauvegardé. */
+  protected resetAttackPlan(): void {
+    if (this.phase() !== 'attack' || this.isTrialRunning() || this.isDrawingPath()) {
+      return;
+    }
+    this.engine.resetAttackSession();
+    this.lanes.set(this.loadAttackPlan());
+    this.activeLaneIndex.set(undefined);
+    this.message.set(undefined);
+  }
+
   /** Convertit des voies en cours de composition en `Wave` propre (sans le bookkeeping de tentative). */
   private toWave(lanes: readonly LaneDraft[]): Wave {
     return {
@@ -478,7 +542,7 @@ export class GameBoard implements OnInit {
     this.pendingAttackWave = wave;
     this.message.set(undefined);
     this.activeTrial = this.engine.startAttackTrial(wave);
-    this.trialHeartHp.set(this.activeTrial.getHeartHp());
+    this.trialChateauHp.set(this.activeTrial.getChateauHp());
     this.trialBreachCount.set(this.activeTrial.getBreachCount());
     this.trialMonsters.set([]);
     this.trialOutcome.set(this.activeTrial.getOutcome());
@@ -495,6 +559,17 @@ export class GameBoard implements OnInit {
 
     if (this.phase() === 'attack' && this.isDrawingPath()) {
       this.handleTracingClick(coord);
+      return;
+    }
+
+    if (this.phase() === 'attack') {
+      if (this.isTrialRunning()) {
+        return;
+      }
+      const laneIndex = this.lanes().findIndex((lane) => this.pathContainsCell(lane.path, coord));
+      if (laneIndex !== -1) {
+        this.selectLane(laneIndex);
+      }
       return;
     }
 
@@ -539,6 +614,30 @@ export class GameBoard implements OnInit {
     this.selectedTowerId.set(placed?.id);
   }
 
+  /** Vrai si `coord` tombe sur une case parcourue par `path` (nœuds inclus, segments interpolés). */
+  private pathContainsCell(path: MapPath, coord: GridCoord): boolean {
+    const nodes = path.nodes;
+    if (nodes.length === 0) {
+      return false;
+    }
+    const [x0, y0] = nodes[0];
+    if (x0 === coord.x && y0 === coord.y) {
+      return true;
+    }
+    for (let i = 1; i < nodes.length; i++) {
+      const [ax, ay] = nodes[i - 1];
+      const [bx, by] = nodes[i];
+      if (
+        cellsBetween({ x: ax, y: ay }, { x: bx, y: by }).some(
+          (cell) => cell.x === coord.x && cell.y === coord.y,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private handleTracingClick(coord: GridCoord): void {
     const map = this.map();
     const path = this.drawingPath();
@@ -552,7 +651,7 @@ export class GameBoard implements OnInit {
         return;
       }
       this.drawingPath.set([coord]);
-      this.message.set('Cliquez des cases adjacentes jusqu’au cœur.');
+      this.message.set('Cliquez des cases adjacentes jusqu’au château.');
       return;
     }
 
@@ -565,7 +664,7 @@ export class GameBoard implements OnInit {
     const steps = cellsBetween(last, coord);
     const filledCells: GridCoord[] = [];
     let cursor = last;
-    let reachedHeart = false;
+    let reachedChateau = false;
     for (const step of steps) {
       if (!isValidPathStep(map, this.towers(), cursor, step)) {
         this.message.set('Case invalide : doit être dans la grille et libre de tour.');
@@ -573,14 +672,14 @@ export class GameBoard implements OnInit {
       }
       filledCells.push(step);
       cursor = step;
-      if (isHeartCell(map, step)) {
-        reachedHeart = true;
+      if (isChateauCell(map, step)) {
+        reachedChateau = true;
         break;
       }
     }
 
     const nextPath = [...path, ...filledCells];
-    if (reachedHeart) {
+    if (reachedChateau) {
       const newLane: LaneDraft = {
         path: { id: `custom-${this.customLaneSequence++}`, nodes: nextPath.map((p) => [p.x, p.y]) },
         units: [],
@@ -598,10 +697,93 @@ export class GameBoard implements OnInit {
 
   protected onCanvasMove(event: MouseEvent): void {
     this.hoverCell.set(this.toGridCoord(event));
+    this.boardTooltip.set(this.computeBoardTooltip(event));
   }
 
   protected onCanvasLeave(): void {
     this.hoverCell.set(undefined);
+    this.boardTooltip.set(undefined);
+  }
+
+  /** Caractéristiques d'un type de tour, formatées pour l'infobulle. */
+  protected towerStats(type: TowerType): TooltipStat[] {
+    const stats: TooltipStat[] = [
+      { label: 'Coût', value: `${type.cost}` },
+      { label: 'Portée', value: `${type.range} cases` },
+      { label: 'Dégâts', value: `${type.damage}` },
+      { label: 'Cadence', value: `${type.cooldown} ticks` },
+    ];
+    if (type.splashRadius) {
+      stats.push({ label: 'Zone', value: `${type.splashRadius} cases` });
+    }
+    if (type.slowFactor) {
+      stats.push({
+        label: 'Ralentissement',
+        value: `-${Math.round((1 - type.slowFactor) * 100)}% pendant ${type.slowDuration} ticks`,
+      });
+    }
+    if (type.armorBonus) {
+      stats.push({ label: 'Bonus anti-blindé', value: `×${type.armorBonus}` });
+    }
+    return stats;
+  }
+
+  /** Caractéristiques d'un type de monstre, formatées pour l'infobulle. */
+  protected monsterStats(type: MonsterType): TooltipStat[] {
+    return [
+      { label: 'PV', value: `${type.hp}` },
+      { label: 'Vitesse', value: `${type.speed} case/tick` },
+      { label: 'Blindage', value: type.armored ? 'Blindé' : 'Non blindé' },
+      { label: 'Dégâts au château', value: `${type.chateauDamage}` },
+    ];
+  }
+
+  /** Détermine la tour posée ou le monstre survolé par la souris, pour affichage d'une infobulle sur le plateau. */
+  private computeBoardTooltip(event: MouseEvent): BoardTooltip | undefined {
+    const coord = this.toGridCoord(event);
+    if (!coord) {
+      return undefined;
+    }
+
+    const tower = this.towers().find(
+      (t) => t.position.x === coord.x && t.position.y === coord.y,
+    );
+    if (tower) {
+      const type = findTowerType(tower.typeId);
+      if (!type) {
+        return undefined;
+      }
+      return {
+        left: event.offsetX + 14,
+        top: event.offsetY + 14,
+        heading: type.name,
+        description: type.description,
+        stats: this.towerStats(type),
+      };
+    }
+
+    const fractional = this.toFractionalCoord(event);
+    if (!fractional) {
+      return undefined;
+    }
+    const monster = this.trialMonsters().find(
+      (m) => Math.hypot(m.position.x - fractional.x, m.position.y - fractional.y) < 0.5,
+    );
+    if (monster) {
+      const type = findMonsterType(monster.typeId);
+      if (!type) {
+        return undefined;
+      }
+      return {
+        left: event.offsetX + 14,
+        top: event.offsetY + 14,
+        heading: type.name,
+        description: type.description,
+        stats: this.monsterStats(type),
+      };
+    }
+
+    return undefined;
   }
 
   // ---- Simulation commune (Défense et Attaque) -------------------------
@@ -616,7 +798,7 @@ export class GameBoard implements OnInit {
       return;
     }
     const running = trial.step();
-    this.trialHeartHp.set(trial.getHeartHp());
+    this.trialChateauHp.set(trial.getChateauHp());
     this.trialBreachCount.set(trial.getBreachCount());
     this.trialMonsters.set(
       trial.getMonsters().map((monster) => ({
@@ -633,6 +815,20 @@ export class GameBoard implements OnInit {
       this.projectiles.push(
         ...shots.map((shot) => ({ from: shot.towerPosition, to: shot.targetPosition, firedAtMs })),
       );
+      const splashShots = shots.filter((shot): shot is typeof shot & { splashRadius: number } =>
+        Boolean(shot.splashRadius),
+      );
+      if (splashShots.length > 0) {
+        // L'explosion apparaît à l'impact, une fois le projectile arrivé sur sa cible.
+        const impactAtMs = firedAtMs + PROJECTILE_DURATION_MS;
+        this.splashes.push(
+          ...splashShots.map((shot) => ({
+            position: shot.targetPosition,
+            radius: shot.splashRadius,
+            firedAtMs: impactAtMs,
+          })),
+        );
+      }
       this.ensureProjectileAnimationRunning();
     }
 
@@ -649,10 +845,12 @@ export class GameBoard implements OnInit {
     if (this.phase() === 'defense') {
       if (outcome === 'success') {
         this.engine.resolveDefenseSuccess();
+        this.lanes.set(this.loadAttackPlan());
+        this.activeLaneIndex.set(undefined);
         this.message.set('Défense réussie ! La forteresse est figée : phase Attaque.');
         this.resetTrialDisplay();
       } else {
-        this.message.set('Défense échouée — le cœur est tombé. Ajustez vos tours et réessayez.');
+        this.message.set('Défense échouée — le château est tombé. Ajustez vos tours et réessayez.');
       }
     } else {
       if (outcome === 'success') {
@@ -660,12 +858,10 @@ export class GameBoard implements OnInit {
         if (wave) {
           this.engine.resolveAttackSuccess(wave);
         }
-        // Le plan d'attaque n'est pas remis à zéro : il reste le point de départ du prochain
-        // cycle. Ses affectations, déjà éprouvées par une attaque réussie, sont marquées
-        // comme établies (retrait payant) — CONCEPTION.md §5.2.
-        this.lanes.update((lanes) =>
-          lanes.map((lane) => ({ ...lane, units: lane.units.map((unit) => ({ ...unit, addedAtAttempt: 0 })) })),
-        );
+        // Le plan d'attaque n'est pas remis à zéro : il devient le plan sauvegardé, point de
+        // départ du prochain cycle, ses affectations désormais établies (retrait payant) —
+        // CONCEPTION.md §5.2, §11 décision 12.
+        this.lanes.set(this.loadAttackPlan());
         this.activeLaneIndex.set(undefined);
         this.message.set(
           `Vague victorieuse (${trial.getBreachCount()} brèche(s)) ! Palier ${this.engine.getPalier()} — retour en Défense.`,
@@ -683,7 +879,7 @@ export class GameBoard implements OnInit {
   private resetTrialDisplay(): void {
     this.trialOutcome.set(undefined);
     this.trialMonsters.set([]);
-    this.trialHeartHp.set(undefined);
+    this.trialChateauHp.set(undefined);
     this.trialBreachCount.set(undefined);
   }
 
@@ -694,10 +890,15 @@ export class GameBoard implements OnInit {
     }
     const step = () => {
       const now = performance.now();
-      this.projectiles = this.projectiles.filter((projectile) => now - projectile.firedAtMs < PROJECTILE_DURATION_MS);
+      this.projectiles = this.projectiles.filter(
+        (projectile) => now - projectile.firedAtMs < PROJECTILE_DURATION_MS,
+      );
+      this.splashes = this.splashes.filter((splash) => now - splash.firedAtMs < SPLASH_DURATION_MS);
       this.draw();
       this.projectileAnimationHandle =
-        this.projectiles.length > 0 ? requestAnimationFrame(step) : undefined;
+        this.projectiles.length > 0 || this.splashes.length > 0
+          ? requestAnimationFrame(step)
+          : undefined;
     };
     this.projectileAnimationHandle = requestAnimationFrame(step);
   }
@@ -711,26 +912,41 @@ export class GameBoard implements OnInit {
     }
     this.biomeColors.set(BIOME_COLORS[catalogEntry.biome]);
     try {
-      const map = await fetch(`maps/${mapId}.map.json`).then((response) => response.json() as Promise<GameMap>);
+      const map = await fetch(`maps/${mapId}.map.json`).then(
+        (response) => response.json() as Promise<GameMap>,
+      );
       this.decor.set(generateDecor(map));
       this.engine.startRun(map, catalogEntry.startingData);
+      this.lanes.set(this.loadAttackPlan());
       this.syncFromEngine();
     } catch {
       this.message.set('Impossible de charger la carte.');
     }
   }
 
-  private toGridCoord(event: MouseEvent): GridCoord | undefined {
-    const map = this.map();
+  /** Position du curseur en coordonnées de grille non arrondies (utile pour viser les monstres en mouvement). */
+  private toFractionalCoord(event: MouseEvent): { x: number; y: number } | undefined {
     const canvas = this.canvasRef()?.nativeElement;
-    if (!map || !canvas) {
+    if (!canvas) {
       return undefined;
     }
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const x = Math.floor(((event.clientX - rect.left) * scaleX) / CELL_SIZE);
-    const y = Math.floor(((event.clientY - rect.top) * scaleY) / CELL_SIZE);
+    return {
+      x: ((event.clientX - rect.left) * scaleX) / CELL_SIZE,
+      y: ((event.clientY - rect.top) * scaleY) / CELL_SIZE,
+    };
+  }
+
+  private toGridCoord(event: MouseEvent): GridCoord | undefined {
+    const map = this.map();
+    const fractional = this.toFractionalCoord(event);
+    if (!map || !fractional) {
+      return undefined;
+    }
+    const x = Math.floor(fractional.x);
+    const y = Math.floor(fractional.y);
     if (x < 0 || y < 0 || x >= map.grid.cols || y >= map.grid.rows) {
       return undefined;
     }
@@ -743,10 +959,53 @@ export class GameBoard implements OnInit {
     this.remainingBudget.set(this.engine.getRemainingBudget());
     this.defenseBudgetTotal.set(this.engine.getDefenseBudget());
     this.attackBudgetTotal.set(this.engine.getAttackBudget());
-    this.heartMaxHp.set(this.engine.getHeartMaxHp());
+    this.chateauMaxHp.set(this.engine.getChateauMaxHp());
     this.phase.set(this.engine.getPhase());
     this.palier.set(this.engine.getPalier());
     this.vagueCourante.set(this.engine.getVagueCourante());
+  }
+
+  /** Centre + portée à prévisualiser sur les chemins : la tour sélectionnée, ou celle en attente de pose au survol. */
+  private computeRangePreview(): { center: GridCoord; range: number } | undefined {
+    if (this.phase() !== 'defense' || this.isTrialRunning() || this.isMovingTower()) {
+      return undefined;
+    }
+    const selected = this.selectedTower();
+    if (selected) {
+      const type = findTowerType(selected.typeId);
+      return type ? { center: selected.position, range: type.range } : undefined;
+    }
+    if (this.selectedTowerId()) {
+      return undefined;
+    }
+    const hover = this.hoverCell();
+    if (!hover) {
+      return undefined;
+    }
+    const type = findTowerType(this.selectedTypeId());
+    return type ? { center: hover, range: type.range } : undefined;
+  }
+
+  /**
+   * Cases des chemins de la carte situées à `range` cases de `center` (même métrique de distance
+   * que le ciblage moteur, cf. combat.ts::selectTarget).
+   */
+  private pathCellsInRange(map: GameMap, center: GridCoord, range: number): GridCoord[] {
+    const cells: GridCoord[] = [];
+    for (const path of map.paths) {
+      const nodes = path.nodes;
+      if (nodes.length === 0) {
+        continue;
+      }
+      const [x0, y0] = nodes[0];
+      cells.push({ x: x0, y: y0 });
+      for (let i = 1; i < nodes.length; i++) {
+        const [ax, ay] = nodes[i - 1];
+        const [bx, by] = nodes[i];
+        cells.push(...cellsBetween({ x: ax, y: ay }, { x: bx, y: by }));
+      }
+    }
+    return cells.filter((cell) => Math.hypot(cell.x - center.x, cell.y - center.y) <= range);
   }
 
   private draw(): void {
@@ -806,7 +1065,19 @@ export class GameBoard implements OnInit {
     for (const path of map.paths) {
       ctx.strokeStyle = isAttackPhase ? hexToRgba(biome.path, 0.25) : biome.path;
       ctx.lineWidth = CELL_SIZE * 0.4;
-      this.strokePolyline(ctx, path.nodes.map(([x, y]) => ({ x, y })));
+      this.strokePolyline(
+        ctx,
+        path.nodes.map(([x, y]) => ({ x, y })),
+      );
+    }
+
+    // Portion des chemins atteignable par la tour sélectionnée (ou celle sur le point d'être posée).
+    const rangePreview = this.computeRangePreview();
+    if (rangePreview) {
+      ctx.fillStyle = 'rgba(120, 255, 170, 0.45)';
+      for (const cell of this.pathCellsInRange(map, rangePreview.center, rangePreview.range)) {
+        ctx.fillRect(cell.x * CELL_SIZE + 4, cell.y * CELL_SIZE + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+      }
     }
 
     // Voies composées par l'attaquant : la voie active en surbrillance, les autres atténuées.
@@ -814,7 +1085,10 @@ export class GameBoard implements OnInit {
       const isActive = index === this.activeLaneIndex();
       ctx.strokeStyle = isActive ? '#ffe08c' : 'rgba(255, 224, 140, 0.55)';
       ctx.lineWidth = CELL_SIZE * 0.32;
-      this.strokePolyline(ctx, lane.path.nodes.map(([x, y]) => ({ x, y })));
+      this.strokePolyline(
+        ctx,
+        lane.path.nodes.map(([x, y]) => ({ x, y })),
+      );
     });
 
     // Tracé en cours : ligne pointillée vive + un point à chaque case cliquée.
@@ -829,7 +1103,13 @@ export class GameBoard implements OnInit {
       ctx.fillStyle = '#7be0ff';
       for (const point of drawing) {
         ctx.beginPath();
-        ctx.arc(point.x * CELL_SIZE + CELL_SIZE / 2, point.y * CELL_SIZE + CELL_SIZE / 2, 4, 0, Math.PI * 2);
+        ctx.arc(
+          point.x * CELL_SIZE + CELL_SIZE / 2,
+          point.y * CELL_SIZE + CELL_SIZE / 2,
+          4,
+          0,
+          Math.PI * 2,
+        );
         ctx.fill();
       }
     }
@@ -843,12 +1123,12 @@ export class GameBoard implements OnInit {
       ctx.fillRect(spawn.x * CELL_SIZE + 4, spawn.y * CELL_SIZE + 4, CELL_SIZE - 8, CELL_SIZE - 8);
     }
 
-    const heartCx = map.heart.x * CELL_SIZE + CELL_SIZE / 2;
-    const heartCy = map.heart.y * CELL_SIZE + CELL_SIZE / 2;
-    if (!this.drawSprite(ctx, 'heart', heartCx, heartCy, CELL_SIZE * 0.9)) {
-      ctx.fillStyle = '#c0392b';
+    const chateauCx = map.chateau.x * CELL_SIZE + CELL_SIZE / 2;
+    const chateauCy = map.chateau.y * CELL_SIZE + CELL_SIZE / 2;
+    if (!this.drawSprite(ctx, 'chateau', chateauCx, chateauCy, CELL_SIZE * 0.9)) {
+      ctx.fillStyle = '#9b9086';
       ctx.beginPath();
-      ctx.arc(heartCx, heartCy, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
+      ctx.arc(chateauCx, chateauCy, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -867,7 +1147,13 @@ export class GameBoard implements OnInit {
       const cy = tower.position.y * CELL_SIZE + CELL_SIZE / 2;
 
       if (isSelected && type) {
-        this.drawRangeRing(ctx, tower.position.x, tower.position.y, type.range, 'rgba(120, 200, 255, 0.8)');
+        this.drawRangeRing(
+          ctx,
+          tower.position.x,
+          tower.position.y,
+          type.range,
+          'rgba(120, 200, 255, 0.8)',
+        );
       }
 
       if (!this.drawSprite(ctx, tower.typeId, cx, cy, CELL_SIZE * 0.85)) {
@@ -938,6 +1224,29 @@ export class GameBoard implements OnInit {
       ctx.arc(bx, by, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    for (const splash of this.splashes) {
+      const t = (now - splash.firedAtMs) / SPLASH_DURATION_MS;
+      if (t < 0 || t > 1) {
+        continue;
+      }
+      const cx = splash.position.x * CELL_SIZE + CELL_SIZE / 2;
+      const cy = splash.position.y * CELL_SIZE + CELL_SIZE / 2;
+      const maxRadiusPx = splash.radius * CELL_SIZE;
+      const radiusPx = maxRadiusPx * (0.3 + 0.7 * t);
+      const alpha = 1 - t;
+
+      ctx.fillStyle = `rgba(255, 140, 60, ${alpha * 0.25})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(255, 180, 90, ${alpha * 0.9})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   /** Dessine le décor de fond (touffes de végétation, roches…) : purement cosmétique, sous les chemins et le reste. */
@@ -973,7 +1282,13 @@ export class GameBoard implements OnInit {
   }
 
   /** Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête. */
-  private drawSprite(ctx: CanvasRenderingContext2D, id: string, cx: number, cy: number, size: number): boolean {
+  private drawSprite(
+    ctx: CanvasRenderingContext2D,
+    id: string,
+    cx: number,
+    cy: number,
+    size: number,
+  ): boolean {
     const image = this.sprites.get(id);
     if (!image || !image.complete || image.naturalWidth === 0) {
       return false;

@@ -61,7 +61,7 @@ describe('pointAtDistance', () => {
 const tracingMap: GameMap = {
   id: 'tracing-map',
   grid: { cols: 5, rows: 5, cell: 'square' },
-  heart: { x: 4, y: 4 },
+  chateau: { x: 4, y: 4 },
   spawns: [{ id: 's1', x: 0, y: 0 }],
   paths: [],
 };

@@ -27,6 +27,12 @@
   letter-spacing: 0.04em;
 }
 
+.shell__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .shell__change-map {
   padding: 0.4rem 0.7rem;
   border: 1px solid #2a2f3a;
@@ -40,4 +46,29 @@
     border-color: #5fb0ff;
     background: #1d2a3a;
   }
+}
+
+.shell__help {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid #2a2f3a;
+  border-radius: 50%;
+  background: #171a22;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #5fb0ff;
+    background: #1d2a3a;
+  }
+}
+
+.shell__help--floating {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 10;
 }

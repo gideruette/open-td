@@ -1,0 +1,57 @@
+@if (open()) {
+  <div class="help-overlay" (click)="close()">
+    <div
+      class="help-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="help-title"
+      (click)="$event.stopPropagation()"
+    >
+      <header class="help-dialog__header">
+        <h2 id="help-title">Règles du jeu</h2>
+        <button type="button" class="help-dialog__close" aria-label="Fermer" (click)="close()">×</button>
+      </header>
+
+      <div class="help-dialog__body">
+        <p>
+          Vous bâtissez votre propre forteresse, puis vous l'attaquez vous-même. Les phases
+          <strong>Défense</strong> et <strong>Attaque</strong> alternent, mais uniquement quand la phase en
+          cours <strong>réussit</strong> — un échec se rejoue sans limite.
+        </p>
+
+        <h3>Phase Défense</h3>
+        <ul>
+          <li>Placez des tours sur la grille (sauf sur le château et les bords) avec votre budget.</li>
+          <li>Chaque tour vise automatiquement le monstre le plus avancé à sa portée.</li>
+          <li>Lancez l'épreuve : votre forteresse doit tenir face à la <em>vague courante</em>.</li>
+          <li>Succès → le château survit : la forteresse est figée et vous passez en Attaque.</li>
+          <li>Échec → le château tombe : ajustez vos tours et réessayez, sans limite de tentatives.</li>
+          <li>
+            Vendre ou déplacer une tour posée ce palier-ci est gratuit ; une tour héritée d'un palier
+            précédent coûte une partie de sa valeur à toucher.
+          </li>
+        </ul>
+
+        <h3>Phase Attaque</h3>
+        <ul>
+          <li>Tracez un ou plusieurs chemins du spawn au château, ou réutilisez ceux de la carte.</li>
+          <li>Composez une file de monstres par chemin et ordonnez-la (réordonner est toujours gratuit).</li>
+          <li>Lancez l'attaque contre votre forteresse figée avec votre budget d'attaque.</li>
+          <li>Succès → au moins un monstre atteint le château : cette vague devient la prochaine à défendre.</li>
+          <li>Échec → aucun monstre n'a percé : recomposez et réessayez, sans limite de tentatives.</li>
+          <li>
+            Retirer un monstre ajouté lors de la tentative en cours est gratuit ; en retirer un affecté à une
+            tentative déjà lancée ne rembourse qu'une partie de son coût.
+          </li>
+        </ul>
+
+        <h3>Progression</h3>
+        <p>
+          Chaque attaque réussie fait monter le <strong>palier</strong> : les budgets de défense et d'attaque
+          augmentent, et la vague que vous venez de créer devient le prochain défi à tenir. La forteresse et
+          le plan d'attaque persistent d'un cycle à l'autre — vous les renforcez, vous ne repartez pas de zéro.
+        </p>
+      </div>
+    </div>
+  </div>
+}

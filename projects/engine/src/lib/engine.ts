@@ -25,13 +25,16 @@ export class GameEngine {
   private defenseBudget = 0;
   private attackBudget = 0;
   private budgetGrowth: BudgetGrowth = { defense: 0, attack: 0 };
-  private heartMaxHp = 0;
+  private chateauMaxHp = 0;
   private vagueCourante: Wave | undefined;
   private towers: TowerInstance[] = [];
   private towerSequence = 0;
   private attackSunkCost = 0;
   private attackAttempt = 1;
   private defenseSunkCost = 0;
+  private savedAttackPlan: Wave = { lanes: [] };
+  private savedDefenseTowers: TowerInstance[] = [];
+  private savedDefenseSunkCost = 0;
 
   getStatus(): string {
     return `Open TD engine ready (${this.phaseState})`;
@@ -45,13 +48,23 @@ export class GameEngine {
     this.defenseBudget = startingData.startingDefenseBudget;
     this.attackBudget = startingData.startingAttackBudget;
     this.budgetGrowth = startingData.budgetGrowth;
-    this.heartMaxHp = startingData.heartHp;
+    this.chateauMaxHp = startingData.chateauHp;
     this.vagueCourante = startingData.initialWave;
     this.towers = [];
     this.towerSequence = 0;
     this.attackSunkCost = 0;
     this.attackAttempt = 1;
     this.defenseSunkCost = 0;
+    // La toute première phase Attaque démarre avec les mêmes voies (chemins + monstres) que
+    // `initialWave`, pour ne pas forcer le joueur à réarmer chaque chemin prédéfini à vide.
+    this.savedAttackPlan = {
+      lanes: startingData.initialWave.lanes.map((lane) => ({
+        path: lane.path,
+        units: lane.units.map((unit) => ({ ...unit })),
+      })),
+    };
+    this.savedDefenseTowers = [];
+    this.savedDefenseSunkCost = 0;
   }
 
   getMap(): GameMap | undefined {
@@ -157,13 +170,33 @@ export class GameEngine {
     this.attackAttempt += 1;
   }
 
-  getHeartMaxHp(): number {
-    return this.heartMaxHp;
+  getChateauMaxHp(): number {
+    return this.chateauMaxHp;
   }
 
   /** vagueCourante : vague #0 pré-construite, puis dernière attaque réussie (CONCEPTION.md §3). */
   getVagueCourante(): Wave | undefined {
     return this.vagueCourante;
+  }
+
+  /**
+   * Plan d'attaque sauvegardé : point de départ de chaque phase Attaque, établi à la dernière
+   * attaque réussie (voies vides au tout premier cycle) — CONCEPTION.md §11 décision 12.
+   */
+  getAttackPlan(): Wave {
+    return this.savedAttackPlan;
+  }
+
+  /**
+   * Abandonne les modifications de la phase Attaque en cours pour revenir au plan sauvegardé :
+   * remet à zéro le bookkeeping de tentative, comme au tout début de la phase.
+   */
+  resetAttackSession(): void {
+    if (this.phaseState !== 'attack') {
+      return;
+    }
+    this.attackSunkCost = 0;
+    this.attackAttempt = 1;
   }
 
   /** Place une tour du type donné sur la case ciblée, si les règles le permettent (Défense uniquement). */
@@ -226,12 +259,17 @@ export class GameEngine {
     if (!result.ok) {
       return result;
     }
+    let sunkCostDelta = 0;
     if (tower.placedAtPalier !== this.palier) {
       const towerType = findTowerType(tower.typeId);
       if (towerType) {
-        this.defenseSunkCost += towerType.cost - sellRefund(towerType.cost, false);
+        sunkCostDelta = towerType.cost - sellRefund(towerType.cost, false);
       }
     }
+    if (sunkCostDelta > this.getRemainingBudget()) {
+      return { ok: false, reason: 'insufficient-budget' };
+    }
+    this.defenseSunkCost += sunkCostDelta;
     this.towers = [...otherTowers, { ...tower, position }];
     return { ok: true };
   }
@@ -244,7 +282,7 @@ export class GameEngine {
     if (this.phaseState !== 'defense') {
       throw new Error('Not in defense phase');
     }
-    return new DefenseSimulation(this.towers, this.vagueCourante, this.heartMaxHp);
+    return new DefenseSimulation(this.towers, this.vagueCourante, this.chateauMaxHp);
   }
 
   /** Défense réussie : la forteresse est figée, passage en phase Attaque. */
@@ -252,9 +290,20 @@ export class GameEngine {
     if (this.phaseState !== 'defense') {
       return;
     }
-    this.attackSunkCost = 0;
-    this.attackAttempt = 1;
     this.phaseState = 'attack';
+    this.resetAttackSession();
+  }
+
+  /**
+   * Abandonne les modifications de la phase Défense en cours (poses, ventes, déplacements) pour
+   * revenir à la forteresse telle qu'elle était au début de cette phase.
+   */
+  resetDefenseSession(): void {
+    if (this.phaseState !== 'defense') {
+      return;
+    }
+    this.towers = this.savedDefenseTowers.map((tower) => ({ ...tower }));
+    this.defenseSunkCost = this.savedDefenseSunkCost;
   }
 
   /** Lance une épreuve d'attaque : la vague composée par le joueur contre la forteresse figée. */
@@ -265,7 +314,7 @@ export class GameEngine {
     if (this.phaseState !== 'attack') {
       throw new Error('Not in attack phase');
     }
-    return new DefenseSimulation(this.towers, wave, this.heartMaxHp, undefined, undefined, undefined, 'attack');
+    return new DefenseSimulation(this.towers, wave, this.chateauMaxHp, undefined, undefined, undefined, 'attack');
   }
 
   /**
@@ -277,9 +326,12 @@ export class GameEngine {
       return;
     }
     this.vagueCourante = wave;
+    this.savedAttackPlan = wave;
     this.palier += 1;
     this.defenseBudget += this.budgetGrowth.defense;
     this.attackBudget += this.budgetGrowth.attack;
     this.phaseState = 'defense';
+    this.savedDefenseTowers = this.towers.map((tower) => ({ ...tower }));
+    this.savedDefenseSunkCost = this.defenseSunkCost;
   }
 }

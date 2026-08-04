@@ -1,7 +1,7 @@
 {
   "id": "toundra-05",
   "grid": { "cols": 48, "rows": 16, "cell": "square" },
-  "heart": { "x": 24, "y": 8 },
+  "chateau": { "x": 24, "y": 8 },
   "spawns": [{ "id": "s1", "x": 0, "y": 8 }],
   "paths": [
     {

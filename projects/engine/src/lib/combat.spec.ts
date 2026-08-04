@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
-import { DefenseSimulation, selectTarget, totalHeartDamage, waveCost } from './combat';
+import { DefenseSimulation, selectTarget, totalChateauDamage, waveCost } from './combat';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
 const p2: MapPath = { id: 'p2', nodes: [[0, 3], [20, 3]] };
@@ -13,9 +13,9 @@ function wave(...lanes: WaveLane[]): Wave {
   return { lanes };
 }
 
-const unit: MonsterType = { id: 'unit', name: 'Unit', cost: 1, hp: 1000, speed: 1, armored: false, heartDamage: 1 };
-const goblin: MonsterType = { id: 'goblin', name: 'Gobelin', cost: 5, hp: 20, speed: 1, armored: false, heartDamage: 1 };
-const golem: MonsterType = { id: 'golem', name: 'Golem', cost: 30, hp: 40, speed: 1, armored: true, heartDamage: 4 };
+const unit: MonsterType = { id: 'unit', name: 'Unit', cost: 1, hp: 1000, speed: 1, armored: false, chateauDamage: 1 };
+const goblin: MonsterType = { id: 'goblin', name: 'Gobelin', cost: 5, hp: 20, speed: 1, armored: false, chateauDamage: 1 };
+const golem: MonsterType = { id: 'golem', name: 'Golem', cost: 30, hp: 40, speed: 1, armored: true, chateauDamage: 4 };
 const monsterCatalog: MonsterType[] = [unit, goblin, golem];
 
 const weakTower: TowerType = { id: 'weak', name: 'Weak', cost: 1, range: 100, damage: 1, cooldown: 1000 };
@@ -62,16 +62,16 @@ function tower(overrides: Partial<TowerInstance> = {}): TowerInstance {
 }
 
 describe('DefenseSimulation', () => {
-  it('fails once the heart hp is depleted by monsters reaching the end of the path', () => {
+  it('fails once the chateau hp is depleted by monsters reaching the end of the path', () => {
     const sim = new DefenseSimulation([], wave(lane([{ type: 'unit' }])), 1, monsterCatalog, towerCatalog, 1);
 
     const outcome = sim.runToCompletion();
 
     expect(outcome).toBe('failure');
-    expect(sim.getHeartHp()).toBeLessThanOrEqual(0);
+    expect(sim.getChateauHp()).toBeLessThanOrEqual(0);
   });
 
-  it('succeeds when every monster is destroyed before reaching the heart', () => {
+  it('succeeds when every monster is destroyed before reaching the chateau', () => {
     const towers = [tower({ typeId: 'strong' })];
     const sim = new DefenseSimulation(
       towers,
@@ -85,7 +85,7 @@ describe('DefenseSimulation', () => {
     const outcome = sim.runToCompletion();
 
     expect(outcome).toBe('success');
-    expect(sim.getHeartHp()).toBe(10);
+    expect(sim.getChateauHp()).toBe(10);
   });
 
   it('applies splash damage to monsters near the primary target', () => {
@@ -224,7 +224,7 @@ describe('DefenseSimulation', () => {
     it('defaults to defense mode when omitted', () => {
       const sim = new DefenseSimulation([], wave(lane([{ type: 'unit' }])), 1, monsterCatalog, towerCatalog, 1);
 
-      expect(sim.runToCompletion()).toBe('failure'); // heart depleted: this is defense-mode behavior
+      expect(sim.runToCompletion()).toBe('failure'); // chateau depleted: this is defense-mode behavior
     });
   });
 
@@ -278,13 +278,13 @@ describe('DefenseSimulation', () => {
       expect(remaining.some((monster) => sim.getMonsterPosition(monster).y === 3)).toBe(true);
     });
 
-    it('breaches independently attribute heart damage regardless of lane', () => {
+    it('breaches independently attribute chateau damage regardless of lane', () => {
       const twoLaneWave = wave(lane([{ type: 'goblin' }], p1), lane([{ type: 'goblin' }], p2));
       const sim = new DefenseSimulation([], twoLaneWave, 2, monsterCatalog, towerCatalog, 1);
 
       const outcome = sim.runToCompletion();
 
-      // Two goblins (heartDamage 1 each) breach across two lanes -> heart drops to 0 -> failure.
+      // Two goblins (chateauDamage 1 each) breach across two lanes -> chateau drops to 0 -> failure.
       expect(outcome).toBe('failure');
       expect(sim.getBreachCount()).toBe(2);
     });
@@ -312,20 +312,20 @@ describe('selectTarget', () => {
   });
 });
 
-describe('totalHeartDamage', () => {
-  it('sums the heart damage of every unit across all lanes', () => {
+describe('totalChateauDamage', () => {
+  it('sums the chateau damage of every unit across all lanes', () => {
     const w = wave(lane([{ type: 'goblin' }, { type: 'goblin' }]), lane([{ type: 'golem' }], p2));
-    expect(totalHeartDamage(w, monsterCatalog)).toBe(goblin.heartDamage * 2 + golem.heartDamage);
+    expect(totalChateauDamage(w, monsterCatalog)).toBe(goblin.chateauDamage * 2 + golem.chateauDamage);
   });
 
   it('ignores unknown unit types instead of throwing', () => {
     const w = wave(lane([{ type: 'ghost' }]));
-    expect(totalHeartDamage(w, monsterCatalog)).toBe(0);
+    expect(totalChateauDamage(w, monsterCatalog)).toBe(0);
   });
 
-  it('the shipped forest-01 wave #0 can destroy an undefended heart (CONCEPTION.md §4, §6)', () => {
+  it('the shipped forest-01 wave #0 can destroy an undefended chateau (CONCEPTION.md §4, §6)', () => {
     // Mirrors projects/open-td/public/maps/forest-01.start.json — if that data changes,
-    // this must be kept in sync so a fully undefended heart stays destructible.
+    // this must be kept in sync so a fully undefended chateau stays destructible.
     const southPath: MapPath = { id: 'south', nodes: [[0, 12], [0, 18], [16, 18], [16, 12]] };
     const wave0 = wave(
       lane(
@@ -333,8 +333,8 @@ describe('totalHeartDamage', () => {
         southPath,
       ),
     );
-    const shippedHeartHp = 5;
-    expect(totalHeartDamage(wave0)).toBeGreaterThanOrEqual(shippedHeartHp);
+    const shippedChateauHp = 5;
+    expect(totalChateauDamage(wave0)).toBeGreaterThanOrEqual(shippedChateauHp);
   });
 });
 

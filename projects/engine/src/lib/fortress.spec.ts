@@ -5,7 +5,7 @@ import {
   canPlaceTower,
   findTowerAt,
   isBorderCell,
-  isHeartCell,
+  isChateauCell,
   isWithinGrid,
   removeTower,
   spentBudget,
@@ -14,7 +14,7 @@ import {
 const map: GameMap = {
   id: 'test-map',
   grid: { cols: 6, rows: 6, cell: 'square' },
-  heart: { x: 3, y: 3 },
+  chateau: { x: 3, y: 3 },
   spawns: [{ id: 's1', x: 0, y: 3 }],
   paths: [{ id: 'p1', nodes: [[0, 3], [3, 3]] }],
 };
@@ -37,13 +37,13 @@ describe('isWithinGrid', () => {
   });
 });
 
-describe('isHeartCell', () => {
-  it('is true for the heart cell', () => {
-    expect(isHeartCell(map, { x: 3, y: 3 })).toBe(true);
+describe('isChateauCell', () => {
+  it('is true for the chateau cell', () => {
+    expect(isChateauCell(map, { x: 3, y: 3 })).toBe(true);
   });
 
   it('is false elsewhere', () => {
-    expect(isHeartCell(map, { x: 1, y: 1 })).toBe(false);
+    expect(isChateauCell(map, { x: 1, y: 1 })).toBe(false);
   });
 });
 
@@ -90,10 +90,10 @@ describe('canOccupyCell', () => {
     });
   });
 
-  it('rejects the heart cell', () => {
+  it('rejects the chateau cell', () => {
     expect(canOccupyCell(map, [], { x: 3, y: 3 })).toEqual({
       ok: false,
-      reason: 'heart-cell',
+      reason: 'chateau-cell',
     });
   });
 
@@ -141,10 +141,10 @@ describe('canPlaceTower', () => {
     });
   });
 
-  it('rejects the heart cell', () => {
+  it('rejects the chateau cell', () => {
     expect(canPlaceTower(map, [], archer, { x: 3, y: 3 }, 100)).toEqual({
       ok: false,
-      reason: 'heart-cell',
+      reason: 'chateau-cell',
     });
   });
 

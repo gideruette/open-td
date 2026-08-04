@@ -2,11 +2,19 @@
   <main class="shell">
     <header class="shell__header">
       <h1>{{ title() }}</h1>
-      <button type="button" class="shell__change-map" (click)="backToMenu()">Changer de carte</button>
+      <div class="shell__header-actions">
+        <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">?</button>
+        <button type="button" class="shell__change-map" (click)="backToMenu()">Changer de carte</button>
+      </div>
     </header>
     <otd-game-board [mapId]="mapId" />
     <router-outlet />
   </main>
 } @else {
   <otd-map-select (mapChosen)="onMapChosen($event)" />
+  <button type="button" class="shell__help shell__help--floating" aria-label="Règles du jeu" (click)="openHelp()">
+    ?
+  </button>
 }
+
+<otd-help-modal [open]="helpOpen()" (closed)="closeHelp()" />

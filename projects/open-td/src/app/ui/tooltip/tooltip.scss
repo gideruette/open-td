@@ -1,0 +1,49 @@
+:host {
+  display: block;
+  pointer-events: none;
+}
+
+.otd-tooltip {
+  min-width: 10rem;
+  max-width: 16rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #2a2f3a;
+  border-radius: 0.4rem;
+  background: #0e1017;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.otd-tooltip__heading {
+  margin: 0 0 0.15rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.otd-tooltip__description {
+  margin: 0 0 0.35rem;
+  opacity: 0.8;
+}
+
+.otd-tooltip__stats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.otd-tooltip__stats li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.otd-tooltip__stat-label {
+  opacity: 0.65;
+}
+
+.otd-tooltip__stat-value {
+  font-weight: 600;
+}

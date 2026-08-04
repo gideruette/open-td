@@ -89,10 +89,10 @@ Le plaisir vient du dialogue avec soi-même : _« Ma défense tient contre ce qu
 
 ### Règle d’alternance
 
-| Phase en cours | Condition de succès                 | Effet                                                                         |
-| -------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
-| **Défense**    | Le cœur survit à `vagueCourante`    | Passage en **Attaque** (forteresse **figée**)                                 |
-| **Attaque**    | Au moins un monstre atteint le cœur | `vagueCourante` ← cette vague réussie ; retour **Défense** (budget↑, palier↑) |
+| Phase en cours | Condition de succès                    | Effet                                                                         |
+| -------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| **Défense**    | Le château survit à `vagueCourante`    | Passage en **Attaque** (forteresse **figée**)                                 |
+| **Attaque**    | Au moins un monstre atteint le château | `vagueCourante` ← cette vague réussie ; retour **Défense** (budget↑, palier↑) |
 
 L’échec **ne change pas** de phase : le joueur réorganise tours ou vague et relance (**tentatives illimitées**).  
 Une attaque **échouée** ne remplace pas `vagueCourante`.
@@ -148,7 +148,7 @@ Le joueur peut **prévisualiser** `vagueCourante` (liste, ordre, chemin) avant d
 ### Règles de placement
 
 - Grille **carrée**.
-- Tour posable **n'importe où**, sauf sur le **cœur** et sur un **bord de grille** (première/dernière ligne ou colonne).
+- Tour posable **n'importe où**, sauf sur le **château** et sur un **bord de grille** (première/dernière ligne ou colonne).
 - Budget de construction du palier.
 - Limite optionnelle : nombre max de tours.
 - Forteresse **persistante** : entre deux cycles, les tours déjà placées restent ; le nouveau budget sert à renforcer / compléter (pas de wipe).
@@ -166,7 +166,7 @@ Chaque tour cible automatiquement le monstre le plus avancé sur son chemin, à 
 | **Glace**         | Ralentissement | Peu de dégâts, contrôle       |
 | **Lance-pierres** | Anti-blindé    | Bonus vs monstres lourds      |
 
-### Cœur
+### Château
 
 - PV limités ; s’ils tombent à 0 pendant l’épreuve → **échec de défense** (rester en phase Défense, retries illimités).
 - Entre deux tentatives de défense : forteresse éditable tant que non validée ; après succès, **snapshot figé** pour l’Attaque.
@@ -183,7 +183,7 @@ Chaque tour cible automatiquement le monstre le plus avancé sur son chemin, à 
 
 ### Objectif
 
-Avec un **budget d’attaque** du palier, faire atteindre le cœur de **sa** forteresse figée. Si la vague réussit, elle sera **conservée** comme prochaine `vagueCourante`.
+Avec un **budget d’attaque** du palier, faire atteindre le château de **sa** forteresse figée. Si la vague réussit, elle sera **conservée** comme prochaine `vagueCourante`.
 
 ### 5.1 Composition de vague
 
@@ -221,11 +221,11 @@ Comme la forteresse défensive, le plan d'attaque (voies, chemins, files de mons
 
 ### 5.3 Choix d’itinéraire
 
-La carte expose des chemins prédéfinis spawn → cœur, mais l’attaquant n’y est pas limité :
+La carte expose des chemins prédéfinis spawn → château, mais l’attaquant n’y est pas limité :
 
 - **Chemin prédéfini** : réutiliser un chemin existant de la carte tel quel. Ces chemins n’ont rien de figé : le joueur peut en supprimer un (par exemple « north » ou « south ») ; ceux qui restent continuent d’apparaître aussi bien en phase Défense qu’en phase Attaque.
-- **Tracé libre** : dessiner sa propre route case par case (pas de case occupée par une tour), depuis un spawn jusqu’au cœur. Cliquer une case non adjacente à la dernière comble automatiquement les cases traversées. Une fois validé (le tracé atteint le cœur), ce chemin devient lui aussi persistant, au même titre qu’un chemin prédéfini : il apparaît en Défense comme en Attaque et peut être réutilisé ou supprimé.
-- **Multi-chemins simultané** : la vague peut se répartir en plusieurs **voies** actives en même temps, chacune avec son propre chemin (prédéfini ou tracé) et sa propre file de monstres ordonnée. Chaque voie est traitée en parallèle par la simulation ; le cœur cumule les dégâts/brèches de toutes les voies confondues.
+- **Tracé libre** : dessiner sa propre route case par case (pas de case occupée par une tour), depuis un spawn jusqu’au château. Cliquer une case non adjacente à la dernière comble automatiquement les cases traversées. Une fois validé (le tracé atteint le château), ce chemin devient lui aussi persistant, au même titre qu’un chemin prédéfini : il apparaît en Défense comme en Attaque et peut être réutilisé ou supprimé.
+- **Multi-chemins simultané** : la vague peut se répartir en plusieurs **voies** actives en même temps, chacune avec son propre chemin (prédéfini ou tracé) et sa propre file de monstres ordonnée. Chaque voie est traitée en parallèle par la simulation ; le château cumule les dégâts/brèches de toutes les voies confondues.
 
 Preview avant validation : les voies composées et le tracé en cours restent visibles sur la grille avant de lancer l’attaque.
 
@@ -233,8 +233,8 @@ Preview avant validation : les voies composées et le tracé en cours restent vi
 
 Simulation contre le **snapshot** de forteresse.
 
-- **Succès** : **≥ 1 monstre au cœur** → cette vague (composition + ordre + path) **remplace** `vagueCourante` ; nouveau palier ; retour Défense avec budget accru (forteresse persistante).
-- **Échec** : vague annihilée / cœur intact → réessayer l’attaque sans limite (même forteresse figée, `vagueCourante` inchangée).
+- **Succès** : **≥ 1 monstre au château** → cette vague (composition + ordre + path) **remplace** `vagueCourante` ; nouveau palier ; retour Défense avec budget accru (forteresse persistante).
+- **Échec** : vague annihilée / château intact → réessayer l’attaque sans limite (même forteresse figée, `vagueCourante` inchangée).
 
 La forteresse **ne se modifie pas** pendant la phase Attaque.
 
@@ -251,10 +251,10 @@ Tension volontaire : la vague qui vient de percer devient le prochain mur à ten
 
 ### Conditions (MVP proposé)
 
-| Phase   | Succès                             | Échec                 |
-| ------- | ---------------------------------- | --------------------- |
-| Défense | Cœur > 0 en fin de `vagueCourante` | Cœur ≤ 0              |
-| Attaque | ≥ 1 monstre atteint le cœur        | Aucun monstre au cœur |
+| Phase   | Succès                                | Échec                    |
+| ------- | ------------------------------------- | ------------------------ |
+| Défense | Château > 0 en fin de `vagueCourante` | Château ≤ 0              |
+| Attaque | ≥ 1 monstre atteint le château        | Aucun monstre au château |
 
 Variantes possibles plus tard : seuil de dégâts, % de vague passée, score minimum.
 
@@ -273,10 +273,10 @@ Fin de partie optionnelle : palier max, run endless avec high-score = palier att
 ### Scoring (proposition)
 
 | Métrique                       | Usage                |
-| ------------------------------ | -------------------- |
-| Palier max                     | High-score principal |
-| Cycles réussis                 | Stat de run          |
-| Perfect defense (0 dégât cœur) | Bonus / achievement  |
+| --------------------------------- | -------------------- |
+| Palier max                        | High-score principal |
+| Cycles réussis                    | Stat de run          |
+| Perfect defense (0 dégât château) | Bonus / achievement  |
 
 ---
 
@@ -305,7 +305,7 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
 {
   "id": "forest-01",
   "grid": { "cols": 16, "rows": 12, "cell": "square" },
-  "heart": { "x": 8, "y": 6 },
+  "chateau": { "x": 8, "y": 6 },
   "spawns": [{ "id": "s1", "x": 0, "y": 6 }],
   "paths": [
     {
@@ -366,7 +366,7 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
 ### Principes
 
 - Phase courante très visible (titre + couleur d’accent).
-- Objectif de succès rappelé en permanence (_« Tiens bon »_ / _« Perce le cœur »_).
+- Objectif de succès rappelé en permanence (_« Tiens bon »_ / _« Perce le château »_).
 - Échec = feedback clair + retour immédiat à l’édition (tours ou vague).
 
 ### Écrans MVP
@@ -402,7 +402,7 @@ Le canvas est un composant Angular qui délègue toute la règle métier à `eng
 
 - Validation placement
 - Simulation vague
-- Évaluation succès défense / attaque (≥ 1 monstre au cœur)
+- Évaluation succès défense / attaque (≥ 1 monstre au château)
 - Conservation de vague (`vagueCourante`) au succès d’attaque
 - Transition de phase & montée de palier / budgets
 - Forteresse persistante entre cycles
@@ -424,11 +424,11 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 | 1 | Grille | **Carrée** |
 | 2 | Targeting des tours | **Fixe** : toujours le monstre le plus avancé à portée (pas de choix du joueur) |
 | 3 | Volants en MVP | **Non** (post-MVP) |
-| 4 | Succès attaque | **≥ 1 monstre au cœur** |
+| 4 | Succès attaque | **≥ 1 monstre au château** |
 | 5 | Entre deux défenses | Forteresse **persistante** (améliorer, pas reset) |
 | 6 | Stack | **Angular 22 + Canvas 2D** |
 | 7 | Tentatives | **Illimitées** |
-| 8 | Placement des tours | **N'importe où**, sauf cœur et bords de grille (plus de liste blanche de cases constructibles) |
+| 8 | Placement des tours | **N'importe où**, sauf château et bords de grille (plus de liste blanche de cases constructibles) |
 | 9 | Revente / déplacement d'une tour | **Gratuit** si posée ce palier-ci, **coût partiel** (même fraction) si héritée d'un palier précédent |
 | 10 | Retrait d'un monstre en file (Attaque) | **Gratuit** si affecté à la tentative en cours, **remboursement partiel** sinon (tentative déjà lancée et échouée) |
 | 11 | Réordonner la file d'une voie (Attaque) | **Toujours gratuit** |
@@ -510,17 +510,17 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 ## 16. Glossaire
 
-| Terme                   | Définition                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------- |
-| **Cœur**                | Bâtiment à protéger (défense) ou atteindre (attaque)                                  |
-| **vagueCourante**       | Vague à défendre ; vague #0 puis dernière attaque réussie                             |
-| **Vague #0**            | Unique vague pré-construite fournie par le jeu                                        |
-| **Snapshot forteresse** | État figé des tours (placement, niveaux) pour l’Attaque                              |
-| **Vague**               | Une ou plusieurs voies actives simultanément (phase Attaque)                          |
-| **Voie**                | Chemin (prédéfini ou tracé) + file ordonnée de monstres qui l’emprunte                |
-| **Chemin**              | Itinéraire spawn → cœur : prédéfini par la carte, ou tracé librement par l’attaquant   |
-| **Palier**              | Niveau de run ; monte après une attaque réussie                                       |
-| **Cycle**               | Succès défense + succès attaque                                                       |
+| Terme                   | Définition                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| **Château**             | Bâtiment à protéger (défense) ou atteindre (attaque)                                    |
+| **vagueCourante**       | Vague à défendre ; vague #0 puis dernière attaque réussie                               |
+| **Vague #0**            | Unique vague pré-construite fournie par le jeu                                          |
+| **Snapshot forteresse** | État figé des tours (placement, niveaux) pour l’Attaque                                 |
+| **Vague**               | Une ou plusieurs voies actives simultanément (phase Attaque)                            |
+| **Voie**                | Chemin (prédéfini ou tracé) + file ordonnée de monstres qui l’emprunte                  |
+| **Chemin**              | Itinéraire spawn → château : prédéfini par la carte, ou tracé librement par l’attaquant |
+| **Palier**              | Niveau de run ; monte après une attaque réussie                                         |
+| **Cycle**               | Succès défense + succès attaque                                                         |
 
 ---
 
