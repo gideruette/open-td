@@ -39,6 +39,60 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/** Part des cases intérieures (hors bord, cœur, spawns) semées d'un élément de décor. */
+const DECOR_DENSITY = 0.05;
+
+interface DecorItem {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+/** Générateur pseudo-aléatoire déterministe (mulberry32) : même carte ⇒ même décor à chaque rendu. */
+function seededRandom(seed: number): () => number {
+  let state = seed | 0;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Sème des éléments de décor sur les cases intérieures non spéciales (hors bord, cœur, spawns). */
+function generateDecor(map: GameMap): DecorItem[] {
+  const candidates: GridCoord[] = [];
+  for (let y = 1; y < map.grid.rows - 1; y++) {
+    for (let x = 1; x < map.grid.cols - 1; x++) {
+      if (isHeartCell(map, { x, y }) || isSpawnCell(map, { x, y })) {
+        continue;
+      }
+      candidates.push({ x, y });
+    }
+  }
+
+  const random = seededRandom(hashString(map.id));
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+
+  const count = Math.round(candidates.length * DECOR_DENSITY);
+  return candidates.slice(0, count).map((cell) => ({
+    x: cell.x + 0.2 + random() * 0.6,
+    y: cell.y + 0.2 + random() * 0.6,
+    scale: 0.6 + random() * 0.7,
+  }));
+}
+
 const FAILURE_MESSAGES: Record<string, string> = {
   'map-not-loaded': 'Carte non chargée.',
   'unknown-tower-type': 'Type de tour inconnu.',
@@ -99,6 +153,7 @@ export class GameBoard implements OnInit {
   private readonly sprites = new Map<string, HTMLImageElement>();
   private readonly spriteVersion = signal(0);
   protected readonly biomeColors = signal<MapBiomeColors>(DEFAULT_BIOME_COLORS);
+  protected readonly decor = signal<readonly DecorItem[]>([]);
   private projectiles: ProjectileView[] = [];
   private projectileAnimationHandle: number | undefined;
   private customLaneSequence = 0;
@@ -167,6 +222,7 @@ export class GameBoard implements OnInit {
       this.trialHeartHp();
       this.spriteVersion();
       this.biomeColors();
+      this.decor();
       this.draw();
     });
   }
@@ -656,6 +712,7 @@ export class GameBoard implements OnInit {
     this.biomeColors.set(BIOME_COLORS[catalogEntry.biome]);
     try {
       const map = await fetch(`maps/${mapId}.map.json`).then((response) => response.json() as Promise<GameMap>);
+      this.decor.set(generateDecor(map));
       this.engine.startRun(map, catalogEntry.startingData);
       this.syncFromEngine();
     } catch {
@@ -713,6 +770,7 @@ export class GameBoard implements OnInit {
     const biome = this.biomeColors();
     ctx.fillStyle = biome.background;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    this.drawDecor(ctx, biome.decor);
 
     // Bords de la grille : jamais constructibles (CONCEPTION.md §4).
     ctx.fillStyle = '#1c2230';
@@ -878,6 +936,21 @@ export class GameBoard implements OnInit {
       ctx.fillStyle = `rgba(255, 224, 140, ${alpha})`;
       ctx.beginPath();
       ctx.arc(bx, by, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Dessine le décor de fond (touffes de végétation, roches…) : purement cosmétique, sous les chemins et le reste. */
+  private drawDecor(ctx: CanvasRenderingContext2D, color: string): void {
+    ctx.fillStyle = color;
+    for (const item of this.decor()) {
+      const cx = item.x * CELL_SIZE;
+      const cy = item.y * CELL_SIZE;
+      const r = CELL_SIZE * 0.16 * item.scale;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.arc(cx + r * 0.7, cy + r * 0.25, r * 0.7, 0, Math.PI * 2);
+      ctx.arc(cx - r * 0.6, cy + r * 0.35, r * 0.6, 0, Math.PI * 2);
       ctx.fill();
     }
   }

@@ -11,15 +11,17 @@ export interface MapBiomeColors {
   background: string;
   /** Couleur des chemins (route empruntée par les monstres). */
   path: string;
+  /** Couleur des éléments de décor (végétation, roches…) semés sur le fond. */
+  decor: string;
 }
 
-/** Une couleur de fond et de chemin par biome, appliquée uniformément à toute la carte. */
+/** Une couleur de fond, de chemin et de décor par biome, appliquée uniformément à toute la carte. */
 export const BIOME_COLORS: Record<MapBiome, MapBiomeColors> = {
-  clairiere: { background: '#132016', path: '#d9c37a' },
-  foret: { background: '#0e1712', path: '#c9a24b' },
-  marais: { background: '#0e1a16', path: '#8a9a4a' },
-  toundra: { background: '#141a22', path: '#bcd8e8' },
-  montagne: { background: '#181414', path: '#9a8f7a' },
+  clairiere: { background: '#132016', path: '#d9c37a', decor: '#2f5a37' },
+  foret: { background: '#0e1712', path: '#c9a24b', decor: '#1f3a24' },
+  marais: { background: '#0e1a16', path: '#8a9a4a', decor: '#173028' },
+  toundra: { background: '#141a22', path: '#bcd8e8', decor: '#2c3e4e' },
+  montagne: { background: '#181414', path: '#9a8f7a', decor: '#2c2622' },
 };
 
 /**
