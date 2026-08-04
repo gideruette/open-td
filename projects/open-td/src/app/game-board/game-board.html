@@ -1,202 +1,104 @@
-<section class="board" [class.board--attack]="phase() === 'attack'">
-  <header class="board__status">
-    <h1>
-      <img
-        class="phase-icon"
-        [src]="phase() === 'defense' ? 'assets/sprites/shield-defense.svg' : 'assets/sprites/swords-attack.svg'"
-        alt=""
-      />
-      Palier {{ palier() }} — {{ phase() === 'defense' ? 'Phase Défense' : 'Phase Attaque' }}
-    </h1>
-    @if (phase() === 'defense') {
-      <p class="next-wave">Prochaine vague : {{ describeWave(vagueCourante()) }}</p>
-    }
-  </header>
-
-  @if (phase() === 'defense') {
-    <aside class="board__palette" aria-label="Tours disponibles">
-      <h2>Tours</h2>
-      @for (type of towerTypes; track type.id) {
-        <otd-item-button
-          [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
-          [label]="type.name"
-          [meta]="type.cost + ' · portée ' + type.range"
-          [description]="type.description"
-          [stats]="towerStats(type)"
-          [selected]="selectedTypeId() === type.id"
-          [disabled]="isTrialRunning() || type.cost > remainingBudget()"
-          (clicked)="selectTowerType(type.id)"
-        ></otd-item-button>
-      }
-
-      <p class="budget">
-        <img class="budget__icon" src="assets/sprites/budget-defense.svg" alt="" />
-        Budget : {{ remainingBudget() }} / {{ defenseBudgetTotal() }}
-      </p>
-
-      <h2>Épreuve</h2>
-      <p class="chateau">Château : {{ trialChateauHp() ?? chateauMaxHp() }} / {{ chateauMaxHp() }}</p>
-      <otd-button variant="success" [disabled]="isTrialRunning() || !vagueCourante()" (clicked)="startTrial()">
-        {{ isTrialRunning() ? 'Épreuve en cours…' : 'Lancer l’épreuve' }}
-      </otd-button>
-      <otd-button variant="info" [disabled]="isTrialRunning()" (clicked)="resetDefenseSession()">
-        Réinitialiser la défense
-      </otd-button>
-
-      @if (message()) {
-        <p class="message">{{ message() }}</p>
-      }
-    </aside>
-  } @else {
-    <aside class="board__palette" aria-label="Composition de la vague">
-      <h2>Chemins</h2>
-      @if (isDrawingPath()) {
-        <p class="message">Cliquez la grille : un spawn pour démarrer, puis des cases adjacentes jusqu’au château.</p>
-        <div class="path-options">
-          <otd-button (clicked)="undoLastTracePoint()">Annuler le dernier point</otd-button>
-          <otd-button (clicked)="cancelTracing()">Annuler le tracé</otd-button>
-        </div>
-      } @else {
-        <div class="path-options">
-          <otd-button variant="info" [disabled]="isTrialRunning()" (clicked)="startTracing()">
-            ✏️ Tracer un chemin
-          </otd-button>
-        </div>
-
-        <h2>Monstres</h2>
-        @if (activeLaneIndex() === undefined) {
-          <p class="message">Sélectionnez un chemin ci-dessous pour lui affecter des monstres.</p>
-        }
-        @for (type of monsterTypes; track type.id) {
-          <otd-item-button
-            [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
-            [label]="type.name"
-            [meta]="'' + type.cost"
-            [description]="type.description"
-            [stats]="monsterStats(type)"
-            [disabled]="isTrialRunning() || activeLaneIndex() === undefined || type.cost > getAttackBudgetRemaining()"
-            (clicked)="appendMonster(type.id)"
-          ></otd-item-button>
-        }
-      }
-
-      <p class="budget">
-        <img class="budget__icon" src="assets/sprites/budget-attack.svg" alt="" />
-        Budget : {{ getAttackBudgetRemaining() }} / {{ attackBudgetTotal() }}
-      </p>
-
-      <h2>Épreuve</h2>
-      <p class="chateau">Brèches : {{ trialBreachCount() ?? 0 }}</p>
-      <otd-button
-        variant="success"
-        [disabled]="isTrialRunning() || isDrawingPath() || lanes().length === 0"
-        (clicked)="startAttack()"
+<section
+  class="board"
+  [class.board--attack]="phase() === 'attack'"
+  [class.board--pan]="boardTool() === 'pan'"
+  [class.board--edit]="boardTool() === 'edit'"
+>
+  <div class="board__stage">
+    <div class="board__map">
+      <div
+        #viewport
+        class="board__canvas-wrap"
+        [class.board__canvas-wrap--panning]="isPanning()"
+        (pointerdown)="onViewPointerDown($event)"
+        (pointermove)="onViewPointerMove($event)"
+        (pointerup)="onViewPointerUp($event)"
+        (pointercancel)="onViewPointerUp($event)"
+        (contextmenu)="$event.preventDefault()"
+        (mouseleave)="onCanvasLeave()"
       >
-        {{ isTrialRunning() ? 'Attaque en cours…' : 'Lancer l’attaque' }}
-      </otd-button>
-      <otd-button variant="info" [disabled]="isTrialRunning() || isDrawingPath()" (clicked)="resetAttackPlan()">
-        Réinitialiser à la sauvegarde
-      </otd-button>
-
-      @if (message() && !isDrawingPath()) {
-        <p class="message">{{ message() }}</p>
-      }
-    </aside>
-  }
-
-  <div class="board__canvas-wrap">
-    <canvas
-      #board
-      class="board__canvas"
-      (click)="onCanvasClick($event)"
-      (mousemove)="onCanvasMove($event)"
-      (mouseleave)="onCanvasLeave()"
-    ></canvas>
-    @if (boardTooltip(); as tooltip) {
-      <otd-tooltip
-        class="board__tooltip"
-        [style.left.px]="tooltip.left"
-        [style.top.px]="tooltip.top"
-        [heading]="tooltip.heading"
-        [description]="tooltip.description"
-        [stats]="tooltip.stats"
-      ></otd-tooltip>
-    }
-  </div>
-
-  @if (phase() === 'defense') {
-    @if (selectedTower(); as tower) {
-      <aside class="board__targeting" aria-label="Tour sélectionnée">
-        <h2>{{ tower.typeId }}</h2>
-        @if (isMovingTower()) {
-          <p class="message">Cliquez une case libre pour déplacer la tour.</p>
-          <otd-button (clicked)="cancelMovingTower()">Annuler le déplacement</otd-button>
-        } @else {
-          <otd-button variant="info" (clicked)="startMovingTower()">Déplacer</otd-button>
-          <otd-button variant="danger" (clicked)="sellSelected()">Vendre (+{{ refundFor(tower) }})</otd-button>
+        <canvas #board class="board__canvas" [style.transform]="viewTransform()"></canvas>
+        @if (boardTooltip(); as tooltip) {
+          <otd-tooltip
+            class="board__tooltip"
+            [style.left.px]="tooltip.left"
+            [style.top.px]="tooltip.top"
+            [heading]="tooltip.heading"
+            [description]="tooltip.description"
+            [stats]="tooltip.stats"
+          ></otd-tooltip>
         }
-      </aside>
-    }
-  } @else {
-    <aside class="board__targeting" aria-label="Voies de la vague">
-      <h2>Voies</h2>
-      @if (lanes().length === 0) {
-        <p class="message">Tracez un chemin pour commencer.</p>
-      }
-      @for (lane of lanes(); track $index; let laneIndex = $index) {
-        <div class="lane-card" [class.lane-card--selected]="activeLaneIndex() === laneIndex">
-          <div class="lane-card__header">
-            <input
-              #nameInput
-              type="text"
-              class="lane-card__name"
-              [value]="lane.path.name || laneLabel(lane, laneIndex)"
-              [attr.aria-label]="'Nom de la voie ' + (laneIndex + 1)"
-              (click)="selectLane(laneIndex)"
-              (change)="renameLane(laneIndex, nameInput.value)"
-            />
-            <otd-button
-              variant="danger"
-              size="sm"
-              [disabled]="isTrialRunning()"
-              (clicked)="removeLane(laneIndex)"
-              ariaLabel="Supprimer ce chemin"
-            >×</otd-button>
-          </div>
+      </div>
 
-          @if (lane.units.length === 0) {
-            <p class="message">Aucun monstre.</p>
-          }
-          <ol class="queue-list">
-            @for (unit of lane.units; track $index; let unitIndex = $index) {
-              <li class="queue-item">
-                <span class="queue-item__name">{{ monsterName(unit.type) }}</span>
-                <span class="queue-item__actions">
-                  <otd-button
-                    size="sm"
-                    [disabled]="unitIndex === 0 || isTrialRunning()"
-                    (clicked)="moveQueueUnit(laneIndex, unitIndex, -1)"
-                    ariaLabel="Monter"
-                  >↑</otd-button>
-                  <otd-button
-                    size="sm"
-                    [disabled]="unitIndex === lane.units.length - 1 || isTrialRunning()"
-                    (clicked)="moveQueueUnit(laneIndex, unitIndex, 1)"
-                    ariaLabel="Descendre"
-                  >↓</otd-button>
-                  <otd-button
-                    variant="danger"
-                    size="sm"
-                    [disabled]="isTrialRunning()"
-                    (clicked)="removeQueueUnit(laneIndex, unitIndex)"
-                    ariaLabel="Retirer"
-                  >×</otd-button>
-                </span>
-              </li>
-            }
-          </ol>
-        </div>
+      <otd-board-status [phase]="phase()" [palier]="palier()" [vagueCourante]="vagueCourante()" />
+
+      <otd-board-sheet
+        sheetId="board-targeting"
+        [open]="targetingOpen()"
+        [title]="phase() === 'defense' ? (selectedTower()?.typeId ?? 'Tour') : activeLaneLabel()"
+        [ariaLabel]="phase() === 'defense' ? 'Tour sélectionnée' : 'Voie sélectionnée'"
+        (closed)="closeTargeting()"
+      >
+        @if (phase() === 'defense') {
+          <otd-tower-actions
+            [tower]="selectedTower()"
+            [moving]="isMovingTower()"
+            [trialRunning]="isTrialRunning()"
+            (startMove)="startMovingTower()"
+            (cancelMove)="cancelMovingTower()"
+            (remove)="deleteSelected()"
+            (reset)="resetDefenseSession()"
+          />
+        } @else {
+          <otd-lanes-panel
+            [lane]="activeLane()"
+            [laneIndex]="activeLaneIndex()"
+            [trialRunning]="isTrialRunning()"
+            [attackBudgetRemaining]="getAttackBudgetRemaining()"
+            (laneRename)="renameActiveLane($event)"
+            (laneRemove)="removeActiveLane()"
+            (laneRetrace)="retraceActiveLane()"
+            (monsterAppend)="appendMonster($event)"
+            (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
+            (unitRemove)="removeActiveQueueUnit($event)"
+          />
+        }
+      </otd-board-sheet>
+
+      @if (targetingOpen()) {
+        <button
+          type="button"
+          class="board__sheet-backdrop"
+          aria-label="Fermer le menu"
+          (click)="closeDrawers()"
+        ></button>
       }
-    </aside>
-  }
+    </div>
+
+    <otd-board-hud
+      [phase]="phase()"
+      [trialRunning]="isTrialRunning()"
+      [drawingPath]="isDrawingPath()"
+      [remainingBudget]="remainingBudget()"
+      [defenseBudgetTotal]="defenseBudgetTotal()"
+      [attackBudgetRemaining]="getAttackBudgetRemaining()"
+      [attackBudgetTotal]="attackBudgetTotal()"
+      [chateauHp]="trialChateauHp() ?? chateauMaxHp()"
+      [chateauMaxHp]="chateauMaxHp()"
+      [breachCount]="trialBreachCount() ?? 0"
+      [selectedTypeId]="selectedTypeId()"
+      [lanes]="lanes()"
+      [activeLaneIndex]="activeLaneIndex()"
+      [targetingOpen]="targetingOpen()"
+      [canLaunch]="canLaunch()"
+      [message]="message()"
+      (towerTypeSelect)="selectTowerType($event)"
+      (laneSelect)="selectLane($event)"
+      (startTracing)="startTracing()"
+      (undoTracePoint)="undoLastTracePoint()"
+      (cancelTracing)="cancelTracing()"
+      (targetingToggle)="toggleTargeting()"
+      (launch)="onLaunch()"
+    />
+  </div>
 </section>

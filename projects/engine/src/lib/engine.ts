@@ -9,7 +9,7 @@ import type {
   TowerInstance,
   Wave,
 } from 'shared';
-import { findMonsterType, findTowerType, sellRefund, TOWER_TYPES, unitRemovalRefund } from 'shared';
+import { findTowerType, TOWER_TYPES } from 'shared';
 import { DefenseSimulation, waveCost } from './combat';
 import { canOccupyCell, canPlaceTower, removeTower, spentBudget } from './fortress';
 import { addMapPath, removeMapPath } from './path';
@@ -29,12 +29,8 @@ export class GameEngine {
   private vagueCourante: Wave | undefined;
   private towers: TowerInstance[] = [];
   private towerSequence = 0;
-  private attackSunkCost = 0;
-  private attackAttempt = 1;
-  private defenseSunkCost = 0;
   private savedAttackPlan: Wave = { lanes: [] };
   private savedDefenseTowers: TowerInstance[] = [];
-  private savedDefenseSunkCost = 0;
 
   getStatus(): string {
     return `Open TD engine ready (${this.phaseState})`;
@@ -52,9 +48,6 @@ export class GameEngine {
     this.vagueCourante = startingData.initialWave;
     this.towers = [];
     this.towerSequence = 0;
-    this.attackSunkCost = 0;
-    this.attackAttempt = 1;
-    this.defenseSunkCost = 0;
     // La toute première phase Attaque démarre avec les mêmes voies (chemins + monstres) que
     // `initialWave`, pour ne pas forcer le joueur à réarmer chaque chemin prédéfini à vide.
     this.savedAttackPlan = {
@@ -64,7 +57,6 @@ export class GameEngine {
       })),
     };
     this.savedDefenseTowers = [];
-    this.savedDefenseSunkCost = 0;
   }
 
   getMap(): GameMap | undefined {
@@ -109,12 +101,9 @@ export class GameEngine {
     return this.towers;
   }
 
-  /**
-   * Budget de défense restant, en tenant compte des montants définitivement perdus en
-   * déplaçant des tours héritées d'un palier précédent (CONCEPTION.md §4).
-   */
+  /** Budget de défense restant après les tours actuellement posées. */
   getRemainingBudget(): number {
-    return this.defenseBudget - spentBudget(this.towers, TOWER_TYPES) - this.defenseSunkCost;
+    return this.defenseBudget - spentBudget(this.towers, TOWER_TYPES);
   }
 
   getDefenseBudget(): number {
@@ -125,49 +114,9 @@ export class GameEngine {
     return this.attackBudget;
   }
 
-  /**
-   * Budget d'attaque restant une fois la composition de vague donnée payée. Tient compte des
-   * montants définitivement perdus en retirant des monstres déjà mis en file (CONCEPTION.md §5.2).
-   */
+  /** Budget d'attaque restant une fois la composition de vague donnée payée. */
   getAttackBudgetRemaining(wave: Wave): number {
-    return this.attackBudget - waveCost(wave) - this.attackSunkCost;
-  }
-
-  /**
-   * Tentative d'attaque en cours (incrémentée à chaque échec) : une affectation de monstre
-   * faite pendant la tentative courante peut être défaite gratuitement ; une fois la
-   * tentative passée (échec), elle devient établie et coûte à retirer (CONCEPTION.md §5.2).
-   */
-  getAttackAttempt(): number {
-    return this.attackAttempt;
-  }
-
-  /**
-   * Enregistre le retrait d'un monstre déjà mis en file d'une voie. Gratuit si le monstre a
-   * été affecté pendant la tentative d'attaque courante ; sinon une partie de son coût reste
-   * définitivement perdue plutôt que remboursée en intégralité, pour que défaire une
-   * composition déjà établie ne soit pas gratuit (CONCEPTION.md §5.2).
-   */
-  recordAttackUnitRemoval(monsterTypeId: string, addedAtAttempt: number): void {
-    if (this.phaseState !== 'attack' || addedAtAttempt === this.attackAttempt) {
-      return;
-    }
-    const type = findMonsterType(monsterTypeId);
-    if (!type) {
-      return;
-    }
-    this.attackSunkCost += type.cost - unitRemovalRefund(type.cost);
-  }
-
-  /**
-   * Une tentative d'attaque vient d'échouer : tout ce qui était déjà en place devient
-   * "établi" (retrait payant) ; une nouvelle tentative commence (CONCEPTION.md §5.2).
-   */
-  recordFailedAttackAttempt(): void {
-    if (this.phaseState !== 'attack') {
-      return;
-    }
-    this.attackAttempt += 1;
+    return this.attackBudget - waveCost(wave);
   }
 
   getChateauMaxHp(): number {
@@ -185,18 +134,6 @@ export class GameEngine {
    */
   getAttackPlan(): Wave {
     return this.savedAttackPlan;
-  }
-
-  /**
-   * Abandonne les modifications de la phase Attaque en cours pour revenir au plan sauvegardé :
-   * remet à zéro le bookkeeping de tentative, comme au tout début de la phase.
-   */
-  resetAttackSession(): void {
-    if (this.phaseState !== 'attack') {
-      return;
-    }
-    this.attackSunkCost = 0;
-    this.attackAttempt = 1;
   }
 
   /** Place une tour du type donné sur la case ciblée, si les règles le permettent (Défense uniquement). */
@@ -223,11 +160,10 @@ export class GameEngine {
   }
 
   /**
-   * Vend une tour posée : la retire et rembourse son coût (Défense uniquement). Une tour
-   * héritée d'un palier précédent rapporte moins qu'une tour posée ce palier-ci
-   * (forteresse persistante entre cycles, CONCEPTION.md §4).
+   * Supprime une tour posée et libère son coût de construction dans le budget (Défense uniquement).
+   * Toujours gratuit (CONCEPTION.md §4).
    */
-  sellTower(towerId: string): number | undefined {
+  deleteTower(towerId: string): number | undefined {
     if (this.phaseState !== 'defense') {
       return undefined;
     }
@@ -236,15 +172,14 @@ export class GameEngine {
       return undefined;
     }
     const towerType = findTowerType(tower.typeId);
-    const refund = towerType ? sellRefund(towerType.cost, tower.placedAtPalier === this.palier) : 0;
+    const recovered = towerType?.cost ?? 0;
     this.towers = removeTower(this.towers, towerId);
-    return refund;
+    return recovered;
   }
 
   /**
-   * Déplace une tour déjà posée vers une nouvelle case (Défense uniquement). Gratuit si la
-   * tour a été posée ce palier-ci ; sinon, une partie de sa valeur est définitivement perdue,
-   * comme pour une revente (CONCEPTION.md §4). Ne paie pas le coût plein d'une nouvelle tour.
+   * Déplace une tour déjà posée vers une nouvelle case (Défense uniquement). Toujours gratuit :
+   * ne consomme pas de budget (CONCEPTION.md §4).
    */
   moveTower(towerId: string, position: GridCoord): PlacementResult {
     if (this.phaseState !== 'defense') {
@@ -259,17 +194,6 @@ export class GameEngine {
     if (!result.ok) {
       return result;
     }
-    let sunkCostDelta = 0;
-    if (tower.placedAtPalier !== this.palier) {
-      const towerType = findTowerType(tower.typeId);
-      if (towerType) {
-        sunkCostDelta = towerType.cost - sellRefund(towerType.cost, false);
-      }
-    }
-    if (sunkCostDelta > this.getRemainingBudget()) {
-      return { ok: false, reason: 'insufficient-budget' };
-    }
-    this.defenseSunkCost += sunkCostDelta;
     this.towers = [...otherTowers, { ...tower, position }];
     return { ok: true };
   }
@@ -291,11 +215,10 @@ export class GameEngine {
       return;
     }
     this.phaseState = 'attack';
-    this.resetAttackSession();
   }
 
   /**
-   * Abandonne les modifications de la phase Défense en cours (poses, ventes, déplacements) pour
+   * Abandonne les modifications de la phase Défense en cours (poses, suppressions, déplacements) pour
    * revenir à la forteresse telle qu'elle était au début de cette phase.
    */
   resetDefenseSession(): void {
@@ -303,7 +226,6 @@ export class GameEngine {
       return;
     }
     this.towers = this.savedDefenseTowers.map((tower) => ({ ...tower }));
-    this.defenseSunkCost = this.savedDefenseSunkCost;
   }
 
   /** Lance une épreuve d'attaque : la vague composée par le joueur contre la forteresse figée. */
@@ -332,6 +254,5 @@ export class GameEngine {
     this.attackBudget += this.budgetGrowth.attack;
     this.phaseState = 'defense';
     this.savedDefenseTowers = this.towers.map((tower) => ({ ...tower }));
-    this.savedDefenseSunkCost = this.defenseSunkCost;
   }
 }

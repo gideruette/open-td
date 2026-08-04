@@ -50,15 +50,3 @@ export const TOWER_TYPES: readonly TowerType[] = [
 export function findTowerType(typeId: string): TowerType | undefined {
   return TOWER_TYPES.find((type) => type.id === typeId);
 }
-
-/** Part du coût remboursée pour une tour héritée d'un palier précédent (CONCEPTION.md §4). */
-const PREVIOUS_PALIER_REFUND_RATIO = 0.5;
-
-/**
- * Vendre une tour posée pendant le palier courant rembourse l'intégralité de son coût ;
- * une tour héritée d'un palier précédent (forteresse persistante entre cycles) ne rapporte
- * plus qu'une fraction de son coût (CONCEPTION.md §4).
- */
-export function sellRefund(cost: number, placedThisPalier: boolean): number {
-  return placedThisPalier ? cost : Math.floor(cost * PREVIOUS_PALIER_REFUND_RATIO);
-}

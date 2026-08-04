@@ -35,7 +35,7 @@ export interface MapCatalogEntry {
   description: string;
   difficulty: MapDifficulty;
   biome: MapBiome;
-  grid: { cols: number; rows: number };
+  grid: { cols: number; rows: number; cell: 'hex'; orientation: 'pointy'; offset: 'odd-r' };
   startingData: StartingData;
 }
 
@@ -47,7 +47,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Petite carte resserrée avec un seul spawn : idéale pour découvrir le jeu.',
     difficulty: 'facile',
     biome: 'clairiere',
-    grid: { cols: 16, rows: 12 },
+    grid: { cols: 16, rows: 12, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'clairiere-02',
       startingDefenseBudget: 70,
@@ -58,11 +58,12 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
         lanes: [
           {
             path: {
-              id: 'nord',
+              id: 'ouest',
               nodes: [
-                [0, 6],
-                [0, 2],
-                [8, 2],
+                [8, 11],
+                [1, 11],
+                [1, 1],
+                [8, 1],
                 [8, 6],
               ],
             },
@@ -70,11 +71,12 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
           },
           {
             path: {
-              id: 'sud',
+              id: 'est',
               nodes: [
-                [0, 6],
-                [0, 10],
-                [8, 10],
+                [8, 11],
+                [14, 11],
+                [14, 1],
+                [8, 1],
                 [8, 6],
               ],
             },
@@ -87,10 +89,10 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'forest-01',
     name: 'Forêt',
-    description: 'Un spawn, deux chemins en tenailles autour du château.',
+    description: 'Un spawn bas, deux chemins en tenailles autour du château.',
     difficulty: 'modérée',
     biome: 'foret',
-    grid: { cols: 32, rows: 24 },
+    grid: { cols: 32, rows: 24, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'forest-01',
       startingDefenseBudget: 100,
@@ -101,11 +103,12 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
         lanes: [
           {
             path: {
-              id: 'south',
+              id: 'west',
               nodes: [
-                [0, 12],
-                [0, 18],
-                [16, 18],
+                [16, 23],
+                [2, 23],
+                [2, 2],
+                [16, 2],
                 [16, 12],
               ],
             },
@@ -124,10 +127,10 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'marais-03',
     name: 'Marais',
-    description: 'Deux spawns opposés : la pression peut venir des deux côtés à la fois.',
+    description: 'Deux spawns opposés (haut et bas) : la pression peut venir des deux côtés à la fois.',
     difficulty: 'modérée',
     biome: 'marais',
-    grid: { cols: 24, rows: 18 },
+    grid: { cols: 24, rows: 18, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'marais-03',
       startingDefenseBudget: 130,
@@ -137,11 +140,27 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       initialWave: {
         lanes: [
           {
-            path: { id: 'ouest', nodes: [[0, 9], [12, 9]] },
+            path: {
+              id: 'nord',
+              nodes: [
+                [12, 0],
+                [3, 0],
+                [3, 9],
+                [12, 9],
+              ],
+            },
             units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
           },
           {
-            path: { id: 'est', nodes: [[23, 9], [12, 9]] },
+            path: {
+              id: 'sud',
+              nodes: [
+                [12, 17],
+                [20, 17],
+                [20, 9],
+                [12, 9],
+              ],
+            },
             units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }],
           },
         ],
@@ -151,10 +170,10 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'toundra-05',
     name: 'Toundra',
-    description: 'Carte large et basse : deux longues voies encerclantes.',
+    description: 'Carte large et basse : deux longues voies encerclantes depuis le bas.',
     difficulty: 'difficile',
     biome: 'toundra',
-    grid: { cols: 48, rows: 16 },
+    grid: { cols: 48, rows: 16, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'toundra-05',
       startingDefenseBudget: 140,
@@ -165,11 +184,12 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
         lanes: [
           {
             path: {
-              id: 'haut',
+              id: 'ouest',
               nodes: [
-                [0, 8],
-                [0, 2],
-                [24, 2],
+                [24, 15],
+                [2, 15],
+                [2, 1],
+                [24, 1],
                 [24, 8],
               ],
             },
@@ -177,11 +197,12 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
           },
           {
             path: {
-              id: 'bas',
+              id: 'est',
               nodes: [
-                [0, 8],
-                [0, 14],
-                [24, 14],
+                [24, 15],
+                [45, 15],
+                [45, 1],
+                [24, 1],
                 [24, 8],
               ],
             },
@@ -194,10 +215,10 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'montagne-04',
     name: 'Montagne',
-    description: 'Grande carte, trois spawns et trois voies d’assaut simultanées.',
+    description: 'Grande carte, trois spawns (haut et bas) et trois voies d’assaut simultanées.',
     difficulty: 'difficile',
     biome: 'montagne',
-    grid: { cols: 40, rows: 30 },
+    grid: { cols: 40, rows: 30, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'montagne-04',
       startingDefenseBudget: 160,
@@ -208,27 +229,36 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
         lanes: [
           {
             path: {
-              id: 'haute',
+              id: 'haute-ouest',
               nodes: [
-                [0, 5],
-                [10, 5],
-                [10, 15],
+                [5, 0],
+                [2, 0],
+                [2, 15],
                 [20, 15],
               ],
             },
             units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
           },
           {
-            path: { id: 'centrale', nodes: [[0, 15], [20, 15]] },
+            path: {
+              id: 'haute-est',
+              nodes: [
+                [35, 0],
+                [37, 0],
+                [37, 15],
+                [20, 15],
+              ],
+            },
             units: [{ type: 'orc' }, { type: 'orc' }],
           },
           {
             path: {
               id: 'basse',
               nodes: [
-                [0, 25],
-                [10, 25],
-                [10, 15],
+                [20, 29],
+                [8, 29],
+                [8, 22],
+                [20, 22],
                 [20, 15],
               ],
             },

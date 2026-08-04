@@ -36,7 +36,7 @@ Le plaisir vient du dialogue avec soi-même : _« Ma défense tient contre ce qu
 | Cible | Desktop + mobile (tactile prioritaire) |
 | Rendu | **Canvas 2D** (dans Angular) |
 | Stack | **Angular 22** + TypeScript + Canvas 2D |
-| Grille | **Carrée** |
+| Grille | **Hexagonale** (pointy-top, offset odd-r) |
 | Persistance | IndexedDB / localStorage (progression, forteresse, replays) |
 | Multijoueur | **Hors scope** (solo uniquement) |
 | Open-source | Code, assets libres, docs de contribution |
@@ -127,8 +127,8 @@ Construire une défense capable de **survivre** à `vagueCourante`. Succès → 
 | ------------------ | ------------------------------------------ |
 | Placer une tour    | Sur une case constructible                 |
 | Améliorer une tour | Niveaux 1 → N (coût croissant)             |
-| Déplacer           | Change la case d'une tour déjà posée ; coût selon son palier de pose (voir ci-dessous) |
-| Vendre             | Remboursement partiel si la tour date d'un palier précédent (voir ci-dessous) |
+| Déplacer           | Change la case d'une tour déjà posée (gratuit) |
+| Supprimer          | Retire la tour et libère intégralement son coût de construction |
 | Consulter portée   | Surbrillance de la zone de tir             |
 | Valider & éprouver | Lance `vagueCourante` contre sa forteresse |
 
@@ -147,8 +147,8 @@ Le joueur peut **prévisualiser** `vagueCourante` (liste, ordre, chemin) avant d
 
 ### Règles de placement
 
-- Grille **carrée**.
-- Tour posable **n'importe où**, sauf sur le **château** et sur un **bord de grille** (première/dernière ligne ou colonne).
+- Grille **hexagonale** (pointy-top, coordonnées offset odd-r : `x` = colonne, `y` = ligne).
+- Tour posable **n'importe où**, sauf sur le **château** et sur un **bord de grille** (première/dernière ligne ou colonne du rectangle offset).
 - Budget de construction du palier.
 - Limite optionnelle : nombre max de tours.
 - Forteresse **persistante** : entre deux cycles, les tours déjà placées restent ; le nouveau budget sert à renforcer / compléter (pas de wipe).
@@ -172,10 +172,11 @@ Chaque tour cible automatiquement le monstre le plus avancé sur son chemin, à 
 - Entre deux tentatives de défense : forteresse éditable tant que non validée ; après succès, **snapshot figé** pour l’Attaque.
 - Entre deux **cycles** : la forteresse **persiste** (les tours restent) ; le budget du nouveau palier s’ajoute pour améliorer.
 
-### Revente et déplacement d'une tour
+### Suppression et déplacement d'une tour
 
-- Une tour **vendue ou déplacée pendant le palier où elle a été posée** ne coûte rien : la revente rembourse l'intégralité de son coût, le déplacement est gratuit.
-- Une tour **héritée d'un palier précédent** (forteresse persistante entre cycles) coûte à toucher : la revente ne rembourse plus qu'une fraction de son coût, et la déplacer fait perdre cette même fraction (déduite du budget défense). Ni la revente ni le déplacement ne sont un moyen de reconvertir ou repositionner sans perte un investissement déjà validé par une défense réussie.
+- Supprimer une tour **libère toujours l'intégralité** de son coût de construction dans le budget.
+- Déplacer une tour est **toujours gratuit** : le budget défense n'est pas touché.
+- La forteresse reste éditable librement tant que la phase Défense n'est pas validée (y compris les tours héritées d'un palier précédent).
 
 ---
 
@@ -204,27 +205,22 @@ Exemples :
 - **Rush** — gobelins pour saturer.
 - **Mix** — intercaler types pour varier les profils (blindé, groupé…) reçus par les tours sur un même passage.
 
-Réordonner la file (faire monter/descendre un monstre) est **toujours gratuit** — seul le retrait d'un monstre a un coût potentiel (voir ci-dessous). Ordre figé au lancement (pas de micro live en MVP).
+Réordonner la file (faire monter/descendre un monstre) est **toujours gratuit**. Ordre figé au lancement (pas de micro live en MVP).
 
 ### Retirer un monstre déjà mis en file
 
-Chaque tentative d'attaque (un lancement de `Lancer l'attaque`) a un numéro ; un monstre affecté à une voie porte le numéro de la tentative en cours au moment de son ajout.
-
-- Retirer un monstre affecté **pendant la tentative en cours** (pas encore lancée, ou la composition par défaut de la toute première tentative) est **gratuit** : rien n'a encore été éprouvé.
-- Retirer un monstre affecté **lors d'une tentative précédente** (déjà lancée et échouée) ne rembourse qu'une fraction de son coût : une partie reste définitivement perdue. Cela vaut aussi bien pour un retrait unitaire que pour la suppression d'une voie entière.
-
-Une tentative échouée fait passer tout ce qui était en place au statut « établi » ; une nouvelle tentative commence alors. Modifier une composition déjà éprouvée n'est donc pas gratuit — cela dissuade les allers-retours sans conséquence sur le budget d'attaque restant, tout en laissant une composition pas encore testée entièrement libre à ajuster.
+Retirer un monstre de la file (ou supprimer une voie entière) est **toujours gratuit** : le budget d'attaque correspondant est immédiatement récupéré, que le monstre ait été ajouté pendant la tentative en cours ou lors d'une tentative précédente.
 
 ### Le plan d'attaque persiste entre deux cycles
 
-Comme la forteresse défensive, le plan d'attaque (voies, chemins, files de monstres) **n'est pas remis à zéro** après une attaque réussie : il reste affiché — y compris pendant le cycle de Défense qui suit — et sert de point de départ à la composition du cycle d'Attaque suivant, que le budget d'attaque accru permet d'enrichir. Les affectations qui viennent de réussir sont considérées **établies** dès ce moment : les retirer au cycle suivant coûte, au même titre qu'une affectation d'une tentative précédente (voir ci-dessus).
+Comme la forteresse défensive, le plan d'attaque (voies, chemins, files de monstres) **n'est pas remis à zéro** après une attaque réussie : il reste affiché — y compris pendant le cycle de Défense qui suit — et sert de point de départ à la composition du cycle d'Attaque suivant, que le budget d'attaque accru permet d'enrichir. Modifier ce plan (retraits, ajouts, réordonnancement) reste gratuit.
 
 ### 5.3 Choix d’itinéraire
 
 La carte expose des chemins prédéfinis spawn → château, mais l’attaquant n’y est pas limité :
 
 - **Chemin prédéfini** : réutiliser un chemin existant de la carte tel quel. Ces chemins n’ont rien de figé : le joueur peut en supprimer un (par exemple « north » ou « south ») ; ceux qui restent continuent d’apparaître aussi bien en phase Défense qu’en phase Attaque.
-- **Tracé libre** : dessiner sa propre route case par case (pas de case occupée par une tour), depuis un spawn jusqu’au château. Cliquer une case non adjacente à la dernière comble automatiquement les cases traversées. Une fois validé (le tracé atteint le château), ce chemin devient lui aussi persistant, au même titre qu’un chemin prédéfini : il apparaît en Défense comme en Attaque et peut être réutilisé ou supprimé.
+- **Tracé libre** : dessiner sa propre route case par case (pas de case occupée par une tour), depuis un spawn jusqu’au château. Les cases adjacentes sont les **6 voisins hex**. Cliquer une case non adjacente à la dernière comble automatiquement les cases traversées (ligne hex). Une fois validé (le tracé atteint le château), ce chemin devient lui aussi persistant, au même titre qu’un chemin prédéfini : il apparaît en Défense comme en Attaque et peut être réutilisé ou supprimé.
 - **Multi-chemins simultané** : la vague peut se répartir en plusieurs **voies** actives en même temps, chacune avec son propre chemin (prédéfini ou tracé) et sa propre file de monstres ordonnée. Chaque voie est traitée en parallèle par la simulation ; le château cumule les dégâts/brèches de toutes les voies confondues.
 
 Preview avant validation : les voies composées et le tracé en cours restent visibles sur la grille avant de lancer l’attaque.
@@ -304,23 +300,33 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
 ```json
 {
   "id": "forest-01",
-  "grid": { "cols": 16, "rows": 12, "cell": "square" },
+  "grid": {
+    "cols": 16,
+    "rows": 12,
+    "cell": "hex",
+    "orientation": "pointy",
+    "offset": "odd-r"
+  },
   "chateau": { "x": 8, "y": 6 },
-  "spawns": [{ "id": "s1", "x": 0, "y": 6 }],
+  "spawns": [{ "id": "s1", "x": 8, "y": 11 }],
   "paths": [
     {
-      "id": "north",
+      "id": "ouest",
       "nodes": [
-        [0, 6],
-        [4, 4],
+        [8, 11],
+        [1, 11],
+        [1, 1],
+        [8, 1],
         [8, 6]
       ]
     },
     {
-      "id": "south",
+      "id": "est",
       "nodes": [
-        [0, 6],
-        [4, 8],
+        [8, 11],
+        [14, 11],
+        [14, 1],
+        [8, 1],
         [8, 6]
       ]
     }
@@ -339,7 +345,10 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
   "initialWave": {
     "lanes": [
       {
-        "path": { "id": "south", "nodes": [[0, 12], [0, 18], [16, 18], [16, 12]] },
+        "path": {
+          "id": "west",
+          "nodes": [[16, 23], [2, 23], [2, 2], [16, 2], [16, 12]]
+        },
         "units": [
           { "type": "goblin" },
           { "type": "goblin" },
@@ -421,7 +430,7 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 | # | Question | Décision |
 |---|----------|----------|
-| 1 | Grille | **Carrée** |
+| 1 | Grille | **Hexagonale** (pointy-top, offset odd-r) |
 | 2 | Targeting des tours | **Fixe** : toujours le monstre le plus avancé à portée (pas de choix du joueur) |
 | 3 | Volants en MVP | **Non** (post-MVP) |
 | 4 | Succès attaque | **≥ 1 monstre au château** |
@@ -429,10 +438,10 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 | 6 | Stack | **Angular 22 + Canvas 2D** |
 | 7 | Tentatives | **Illimitées** |
 | 8 | Placement des tours | **N'importe où**, sauf château et bords de grille (plus de liste blanche de cases constructibles) |
-| 9 | Revente / déplacement d'une tour | **Gratuit** si posée ce palier-ci, **coût partiel** (même fraction) si héritée d'un palier précédent |
-| 10 | Retrait d'un monstre en file (Attaque) | **Gratuit** si affecté à la tentative en cours, **remboursement partiel** sinon (tentative déjà lancée et échouée) |
+| 9 | Suppression / déplacement d'une tour | **Toujours gratuit** (suppression = budget récupéré intégralement, déplacement sans coût) |
+| 10 | Retrait d'un monstre en file (Attaque) | **Toujours gratuit** (budget récupéré intégralement) |
 | 11 | Réordonner la file d'une voie (Attaque) | **Toujours gratuit** |
-| 12 | Entre deux attaques | Plan d'attaque **persistant** (comme la forteresse), établi au succès (retrait payant) |
+| 12 | Entre deux attaques | Plan d'attaque **persistant** (comme la forteresse), établi au succès ; éditable librement |
 
 ---
 
@@ -447,7 +456,7 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 ### Phase 1 — Prototype défense
 
-- [x] Grille + placement de tours
+- [x] Grille hexagonale + placement de tours
 - [x] 2–3 types de tours
 - [x] Vague #0 pré-construite
 - [x] Succès / échec défense
@@ -526,6 +535,6 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 ## Prochaines étapes suggérées
 
-1. Schéma JSON carte (grille carrée) + vague #0 + rendu canvas.
-2. Placement de tours.
-3. Simulation vague → succès/échec → alternance de phase.
+1. Croissance des budgets / high-score / sandbox (Phase 3).
+2. Polish PWA, balancing, VFX.
+3. Contenu data-driven et éditeur de cartes.

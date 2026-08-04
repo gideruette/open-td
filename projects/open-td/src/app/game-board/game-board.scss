@@ -1,63 +1,79 @@
 :host {
   display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .board {
-  display: grid;
-  grid-template-columns: 12rem auto 12rem;
-  gap: 1rem;
-  align-items: start;
-
-  // Thème Défense (bleu) par défaut ; phase Attaque bascule sur --phase-accent doré (.board--attack).
   --phase-accent: #5fb0ff;
   --phase-accent-dark: #1d4a6b;
-  --phase-panel-bg: #142229;
+  --phase-panel-bg: rgba(20, 34, 41, 0.94);
+  --phase-panel-border: #1d4a6b;
+  --sheet-gap: 0.5rem;
+  height: 100%;
+  min-height: 0;
 
   &--attack {
     --phase-accent: #ffe08c;
     --phase-accent-dark: #8a6a2a;
-    --phase-panel-bg: #2a2410;
+    --phase-panel-bg: rgba(42, 36, 16, 0.94);
+    --phase-panel-border: #8a6a2a;
+  }
+
+  &--pan .board__canvas-wrap {
+    cursor: grab;
+  }
+
+  &--edit .board__canvas-wrap {
+    cursor: crosshair;
   }
 }
 
-.board__status {
-  grid-column: 1 / -1;
-
-  h1 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0;
-    font-size: 1.15rem;
-    letter-spacing: 0.03em;
-    color: var(--phase-accent);
-    transition: color 0.2s ease;
-  }
+.board__stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--sheet-gap);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.phase-icon {
-  width: 1.7rem;
-  height: 1.7rem;
-  object-fit: contain;
-}
-
-.next-wave {
-  margin: 0.25rem 0 0;
-  opacity: 0.75;
-  font-size: 0.9rem;
+.board__map {
+  position: relative;
+  isolation: isolate;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .board__canvas-wrap {
-  position: relative;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  touch-action: none;
+  border-radius: 0.5rem;
+  user-select: none;
+  -webkit-user-select: none;
+
+  &--panning {
+    cursor: grabbing !important;
+  }
 }
 
 .board__canvas {
-  width: 100%;
+  display: block;
+  // Taille d’affichage calculée en JS pour tenir dans le viewport (contain).
+  width: auto;
   height: auto;
-  border: 1px solid #2a2f3a;
+  max-width: none;
+  border: 1px solid color-mix(in srgb, #2a2f3a 80%, transparent);
+  border-radius: 0.5rem;
   background: #0b0d12;
-  cursor: pointer;
   touch-action: none;
+  transform-origin: 0 0;
+  will-change: transform;
+  pointer-events: none;
 }
 
 .board__tooltip {
@@ -66,132 +82,13 @@
   pointer-events: none;
 }
 
-.board__palette,
-.board__targeting {
-  display: grid;
-  gap: 0.5rem;
-  align-content: start;
-  padding-top: 0.5rem;
-  border-top: 2px solid var(--phase-accent-dark);
-  transition: border-color 0.2s ease;
-
-  h2 {
-    margin: 0 0 0.25rem;
-    font-size: 0.95rem;
-    opacity: 0.8;
-  }
-}
-
-.path-options {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.path-option {
-  display: flex;
-  align-items: stretch;
-  gap: 0.35rem;
-}
-
-.path-option .otd-button {
-  flex: 1;
-}
-
-.budget {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0.25rem 0 0;
-  font-weight: 600;
-  color: var(--phase-accent);
-  transition: color 0.2s ease;
-}
-
-.budget__icon {
-  width: 1.4rem;
-  height: 1.4rem;
-  object-fit: contain;
-}
-
-.chateau {
-  margin: 0;
-  font-weight: 600;
-  color: #ff8f7a;
-}
-
-.message {
-  margin: 0;
-  color: #ff8f7a;
-  font-size: 0.85rem;
-}
-
-.queue-list {
-  list-style: none;
-  margin: 0;
+.board__sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  border: 0;
   padding: 0;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.queue-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid #2a2f3a;
-  border-radius: 0.35rem;
-  background: #171a22;
-}
-
-.queue-item__name {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-.queue-item__actions {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.lane-card {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.5rem;
-  border: 1px solid #2a2f3a;
-  border-radius: 0.4rem;
-  background: #14171f;
-
-  &--selected {
-    border-color: #ffe08c;
-    background: #2a2410;
-  }
-}
-
-.lane-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.lane-card__name {
-  flex: 1;
-  min-width: 0;
-  padding: 0.15rem 0.3rem;
-  border: 1px solid transparent;
-  border-radius: 0.25rem;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-weight: 600;
-  font-size: 0.85rem;
-  text-align: left;
-  cursor: text;
-
-  &:hover,
-  &:focus {
-    border-color: #2a2f3a;
-    outline: none;
-  }
+  margin: 0;
+  background: rgba(8, 10, 14, 0.35);
+  cursor: pointer;
 }

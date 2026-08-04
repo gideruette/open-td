@@ -1,0 +1,13 @@
+<header class="board-status" aria-live="polite">
+  <img
+    class="board-status__icon"
+    [src]="phase() === 'defense' ? 'assets/sprites/shield-defense.svg' : 'assets/sprites/swords-attack.svg'"
+    alt=""
+  />
+  <span class="board-status__title">
+    Palier {{ palier() }} · {{ phase() === 'defense' ? 'Défense' : 'Attaque' }}
+  </span>
+  @if (phase() === 'defense') {
+    <span class="board-status__meta">{{ describeWave(vagueCourante()) }}</span>
+  }
+</header>

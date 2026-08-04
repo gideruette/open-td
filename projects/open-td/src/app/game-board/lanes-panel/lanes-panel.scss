@@ -1,0 +1,85 @@
+:host {
+  display: contents;
+}
+
+.lanes-panel__message {
+  margin: 0;
+  color: #ff8f7a;
+  font-size: 0.85rem;
+}
+
+.lanes-panel__section {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #2a2f3a;
+  border-radius: 0.35rem;
+  background: #171a22;
+}
+
+.queue-item__name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.queue-item__actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.lane-card {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.lane-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lane-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.lane-card__name {
+  flex: 1;
+  min-width: 0;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: text;
+
+  &:hover,
+  &:focus {
+    border-color: #2a2f3a;
+    outline: none;
+  }
+}

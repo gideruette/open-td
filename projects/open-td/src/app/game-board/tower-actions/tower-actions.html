@@ -1,0 +1,14 @@
+@if (tower(); as selected) {
+  @if (moving()) {
+    <p class="tower-actions__message">Touchez une case libre pour déplacer la tour.</p>
+    <otd-button (clicked)="cancelMove.emit()">Annuler le déplacement</otd-button>
+  } @else {
+    <otd-button variant="info" (clicked)="startMove.emit()">Déplacer</otd-button>
+    <otd-button variant="danger" (clicked)="remove.emit()">Supprimer</otd-button>
+  }
+} @else {
+  <p class="tower-actions__message">Aucune tour sélectionnée.</p>
+}
+<otd-button variant="info" [disabled]="trialRunning()" (clicked)="reset.emit()">
+  Réinitialiser la défense
+</otd-button>

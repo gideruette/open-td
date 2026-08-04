@@ -4,6 +4,7 @@ import {
   DestroyRef,
   type ElementRef,
   type OnInit,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -12,15 +13,25 @@ import {
   viewChild,
 } from '@angular/core';
 import type { DefenseOutcome, DefenseSimulation } from 'engine';
-import { GameEngine, cellsBetween, isChateauCell, isSpawnCell, isValidPathStep } from 'engine';
+import {
+  GameEngine,
+  canPlaceTower,
+  cellsBetween,
+  expandPathCells,
+  isBorderCell,
+  isChateauCell,
+  isSpawnCell,
+  isValidPathStep,
+} from 'engine';
 import {
   BIOME_COLORS,
-  MONSTER_TYPES,
-  TOWER_TYPES,
   findMapCatalogEntry,
   findMonsterType,
   findTowerType,
-  sellRefund,
+  hexCorners,
+  hexGridPixelSize,
+  hexToWorld,
+  worldToHex,
 } from 'shared';
 import type {
   GameMap,
@@ -28,22 +39,56 @@ import type {
   GridCoord,
   MapBiomeColors,
   MapPath,
-  MonsterType,
   TowerInstance,
-  TowerType,
   Wave,
   WaveUnit,
 } from 'shared';
-import { Button } from '../ui/button/button';
-import { ItemButton } from '../ui/item-button/item-button';
 import { Tooltip, type TooltipStat } from '../ui/tooltip/tooltip';
+import { formatMonsterStats, formatTowerStats, laneDisplayLabel } from './board-format';
+import { BoardHud } from './board-hud/board-hud';
+import { BoardSheet } from './board-sheet/board-sheet';
+import { BoardStatus } from './board-status/board-status';
+import type { BoardTool, LaneDraft } from './board-types';
+import { LanesPanel } from './lanes-panel/lanes-panel';
+import { TowerActions } from './tower-actions/tower-actions';
 
+/** Rayon extérieur d'un hex (centre → sommet), en pixels. */
 const CELL_SIZE = 32;
+/** Marge autour de la grille pour que les hex ne collent pas au cadre. */
+const CANVAS_PAD = Math.round(CELL_SIZE * 0.4);
+/** Pixels par unité world (distance entre centres de voisins = 1). */
+const WORLD_SCALE = CELL_SIZE * Math.sqrt(3);
+/** Décalage pour que le hex (0,0) tienne entièrement dans le canvas (+ marge). */
+const ORIGIN_X = (Math.sqrt(3) / 2) * CELL_SIZE + CANVAS_PAD;
+const ORIGIN_Y = CELL_SIZE + CANVAS_PAD;
 const TICK_INTERVAL_MS = 100;
 const PROJECTILE_DURATION_MS = 120;
 const SPLASH_DURATION_MS = 220;
+/** Zoom minimal (légèrement sous le fit pour pouvoir dézoomer). */
+const VIEW_ZOOM_MIN = 0.75;
+const VIEW_ZOOM_MAX = 3.5;
+/** Déplacement souris/toucher avant de considérer un drag comme un pan (pas un clic). */
+const PAN_DRAG_THRESHOLD_PX = 10;
+/** Marge de pan autorisée hors cadre (sinon ×1 = pan impossible = conflit avec la pose). */
+const PAN_EDGE_MARGIN_PX = 64;
 const SPRITE_IDS = ['archer', 'canon', 'glace', 'catapulte', 'goblin', 'orc', 'golem', 'chateau'];
 const DEFAULT_BIOME_COLORS: MapBiomeColors = BIOME_COLORS.foret;
+
+function cellCenterPx(coord: GridCoord): GridCoord {
+  const center = hexToWorld(coord, CELL_SIZE);
+  return { x: center.x + ORIGIN_X, y: center.y + ORIGIN_Y };
+}
+
+function worldToPx(world: GridCoord): GridCoord {
+  return { x: world.x * WORLD_SCALE + ORIGIN_X, y: world.y * WORLD_SCALE + ORIGIN_Y };
+}
+
+function hexCornersPx(coord: GridCoord): GridCoord[] {
+  return hexCorners(coord, CELL_SIZE).map((corner) => ({
+    x: corner.x + ORIGIN_X,
+    y: corner.y + ORIGIN_Y,
+  }));
+}
 
 /** Convertit une couleur hex (`#rrggbb`) en `rgba(...)` pour appliquer une transparence. */
 function hexToRgba(hex: string, alpha: number): string {
@@ -101,11 +146,14 @@ function generateDecor(map: GameMap): DecorItem[] {
   }
 
   const count = Math.round(candidates.length * DECOR_DENSITY);
-  return candidates.slice(0, count).map((cell) => ({
-    x: cell.x + 0.2 + random() * 0.6,
-    y: cell.y + 0.2 + random() * 0.6,
-    scale: 0.6 + random() * 0.7,
-  }));
+  return candidates.slice(0, count).map((cell) => {
+    const center = cellCenterPx(cell);
+    return {
+      x: center.x + (random() - 0.5) * CELL_SIZE * 0.5,
+      y: center.y + (random() - 0.5) * CELL_SIZE * 0.5,
+      scale: 0.6 + random() * 0.7,
+    };
+  });
 }
 
 const FAILURE_MESSAGES: Record<string, string> = {
@@ -136,6 +184,7 @@ interface BoardTooltip {
 }
 
 interface ProjectileView {
+  /** Position pixel sur le canvas (déjà convertie). */
   from: GridCoord;
   to: GridCoord;
   firedAtMs: number;
@@ -143,30 +192,17 @@ interface ProjectileView {
 
 /** Explosion de zone à l'impact d'un tir à dégâts de zone (ex. Canon), affichée le temps de sa vie. */
 interface SplashView {
+  /** Position pixel sur le canvas (déjà convertie). */
   position: GridCoord;
-  radius: number;
+  /** Rayon en pixels. */
+  radiusPx: number;
   firedAtMs: number;
-}
-
-/**
- * Un monstre affecté à une voie en cours de composition, avec la tentative d'attaque durant
- * laquelle il a été ajouté : le retrait est gratuit tant que cette tentative est la tentative
- * courante, payant sinon (CONCEPTION.md §5.2).
- */
-interface DraftUnit extends WaveUnit {
-  addedAtAttempt: number;
-}
-
-/** Une voie en cours de composition côté attaquant : un chemin (préconçu ou tracé) + ses monstres. */
-interface LaneDraft {
-  path: MapPath;
-  units: DraftUnit[];
 }
 
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [Button, ItemButton, Tooltip],
+  imports: [BoardHud, BoardSheet, BoardStatus, LanesPanel, Tooltip, TowerActions],
   templateUrl: './game-board.html',
   styleUrl: './game-board.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -176,6 +212,7 @@ export class GameBoard implements OnInit {
 
   private readonly engine = new GameEngine();
   private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('board');
+  private readonly viewportRef = viewChild<ElementRef<HTMLElement>>('viewport');
   private readonly destroyRef = inject(DestroyRef);
 
   private activeTrial: DefenseSimulation | undefined;
@@ -189,16 +226,41 @@ export class GameBoard implements OnInit {
   private splashes: SplashView[] = [];
   private projectileAnimationHandle: number | undefined;
   private customLaneSequence = 0;
+  /** Voie en cours de retracé : unités / chemin conservés jusqu'à validation du nouveau tracé. */
+  private retracing:
+    | { index: number; units: WaveUnit[]; path: MapPath }
+    | undefined;
 
-  protected readonly towerTypes = TOWER_TYPES;
-  protected readonly monsterTypes = MONSTER_TYPES;
+  /** Pointeurs actifs pour pan / pinch-zoom. */
+  private readonly activePointers = new Map<number, { x: number; y: number }>();
+  private panSession:
+    | {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        originX: number;
+        originY: number;
+        dragged: boolean;
+      }
+    | undefined;
+  private pinchSession:
+    | {
+        startDist: number;
+        startZoom: number;
+        startMidX: number;
+        startMidY: number;
+        originPanX: number;
+        originPanY: number;
+      }
+    | undefined;
+  private viewportResizeObserver: ResizeObserver | undefined;
 
   protected readonly map = signal<GameMap | undefined>(undefined);
   protected readonly towers = signal<readonly TowerInstance[]>([]);
   protected readonly remainingBudget = signal(0);
   protected readonly defenseBudgetTotal = signal(0);
   protected readonly attackBudgetTotal = signal(0);
-  protected readonly selectedTypeId = signal<string>(TOWER_TYPES[0].id);
+  protected readonly selectedTypeId = signal<string | undefined>(undefined);
   protected readonly selectedTowerId = signal<string | undefined>(undefined);
   /** Tour en cours de déplacement (case de destination attendue au prochain clic sur la grille). */
   protected readonly movingTowerId = signal<string | undefined>(undefined);
@@ -223,12 +285,47 @@ export class GameBoard implements OnInit {
   /** Infobulle affichée au survol d'une tour posée ou d'un monstre sur le plateau. */
   protected readonly boardTooltip = signal<BoardTooltip | undefined>(undefined);
 
+  /** Main (pan) tant qu'aucune pose / tracé / déplacement n'est actif. */
+  protected readonly boardTool = signal<BoardTool>('pan');
+  /** Tiroir d'actions (tour sélectionnée ou voie sélectionnée). */
+  protected readonly targetingOpen = signal(false);
+
+  /** Caméra : zoom et pan CSS sur le canvas (navigation dans la carte). */
+  protected readonly viewZoom = signal(1);
+  protected readonly viewPanX = signal(0);
+  protected readonly viewPanY = signal(0);
+  protected readonly isPanning = signal(false);
+  protected readonly viewTransform = computed(
+    () => `translate(${this.viewPanX()}px, ${this.viewPanY()}px) scale(${this.viewZoom()})`,
+  );
+
   protected readonly selectedTower = computed(() =>
     this.towers().find((tower) => tower.id === this.selectedTowerId()),
   );
+  protected readonly activeLane = computed(() => {
+    const index = this.activeLaneIndex();
+    return index === undefined ? undefined : this.lanes()[index];
+  });
+  protected readonly activeLaneLabel = computed(() => {
+    const lane = this.activeLane();
+    const index = this.activeLaneIndex();
+    if (!lane || index === undefined) {
+      return 'Voie';
+    }
+    return laneDisplayLabel(lane, index);
+  });
   protected readonly isTrialRunning = computed(() => this.trialOutcome() === 'pending');
   protected readonly isDrawingPath = computed(() => this.drawingPath() !== undefined);
   protected readonly isMovingTower = computed(() => this.movingTowerId() !== undefined);
+  protected readonly canLaunch = computed(() => {
+    if (this.isTrialRunning()) {
+      return false;
+    }
+    if (this.phase() === 'defense') {
+      return !!this.vagueCourante();
+    }
+    return !this.isDrawingPath() && this.lanes().length > 0;
+  });
 
   constructor() {
     this.preloadSprites();
@@ -240,6 +337,25 @@ export class GameBoard implements OnInit {
       if (this.projectileAnimationHandle !== undefined) {
         cancelAnimationFrame(this.projectileAnimationHandle);
       }
+      this.viewportResizeObserver?.disconnect();
+    });
+
+    // `passive: false` pour pouvoir empêcher le scroll de page pendant le zoom molette.
+    afterNextRender(() => {
+      const viewport = this.viewportRef()?.nativeElement;
+      if (!viewport) {
+        return;
+      }
+      const onWheel = (event: WheelEvent) => this.onViewWheel(event);
+      viewport.addEventListener('wheel', onWheel, { passive: false });
+      this.destroyRef.onDestroy(() => viewport.removeEventListener('wheel', onWheel));
+
+      this.viewportResizeObserver = new ResizeObserver(() => {
+        this.fitCanvasToViewport();
+        this.clampPan();
+      });
+      this.viewportResizeObserver.observe(viewport);
+      this.fitCanvasToViewport();
     });
 
     effect(() => {
@@ -249,6 +365,7 @@ export class GameBoard implements OnInit {
       this.movingTowerId();
       this.hoverCell();
       this.selectedTypeId();
+      this.boardTool();
       this.phase();
       this.lanes();
       this.activeLaneIndex();
@@ -266,6 +383,183 @@ export class GameBoard implements OnInit {
     void this.bootstrap();
   }
 
+  protected enterHandMode(): void {
+    this.boardTool.set('pan');
+    this.selectedTypeId.set(undefined);
+    this.movingTowerId.set(undefined);
+    if (this.isDrawingPath()) {
+      this.cancelTracing();
+    }
+  }
+
+  protected toggleTargeting(): void {
+    if (this.isTrialRunning()) {
+      return;
+    }
+    if (this.phase() === 'attack' && this.activeLaneIndex() === undefined) {
+      return;
+    }
+    this.targetingOpen.update((open) => !open);
+  }
+
+  protected closeTargeting(): void {
+    this.targetingOpen.set(false);
+  }
+
+  protected closeDrawers(): void {
+    this.targetingOpen.set(false);
+  }
+
+  protected onLaunch(): void {
+    if (this.phase() === 'defense') {
+      this.startTrial();
+      return;
+    }
+    this.startAttack();
+  }
+
+  // ---- Caméra (pan / zoom) -----------------------------------------------
+
+  protected onViewPointerDown(event: PointerEvent): void {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    if (this.targetingOpen()) {
+      this.closeDrawers();
+    }
+    const viewport = this.viewportRef()?.nativeElement;
+    if (!viewport) {
+      return;
+    }
+    viewport.setPointerCapture(event.pointerId);
+    this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (this.activePointers.size >= 2) {
+      this.panSession = undefined;
+      this.isPanning.set(true);
+      this.hoverCell.set(undefined);
+      this.boardTooltip.set(undefined);
+      this.beginPinch();
+      return;
+    }
+
+    this.panSession = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: this.viewPanX(),
+      originY: this.viewPanY(),
+      dragged: false,
+    };
+  }
+
+  protected onViewPointerMove(event: PointerEvent): void {
+    if (!this.activePointers.has(event.pointerId)) {
+      this.onCanvasMove(event);
+      return;
+    }
+    this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (this.activePointers.size >= 2) {
+      this.updatePinch();
+      return;
+    }
+
+    const session = this.panSession;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const dx = event.clientX - session.startX;
+    const dy = event.clientY - session.startY;
+    if (!session.dragged && Math.hypot(dx, dy) >= PAN_DRAG_THRESHOLD_PX) {
+      session.dragged = true;
+      if (this.boardTool() === 'pan') {
+        this.isPanning.set(true);
+        this.hoverCell.set(undefined);
+        this.boardTooltip.set(undefined);
+      }
+    }
+    if (session.dragged && this.boardTool() === 'pan') {
+      event.preventDefault();
+      this.setPan(session.originX + dx, session.originY + dy);
+      return;
+    }
+    if (!session.dragged) {
+      this.onCanvasMove(event);
+    }
+  }
+
+  protected onViewPointerUp(event: PointerEvent): void {
+    if (!this.activePointers.has(event.pointerId)) {
+      return;
+    }
+
+    const session = this.panSession;
+    const isSessionPointer = session?.pointerId === event.pointerId;
+    const wasTap =
+      isSessionPointer &&
+      !!session &&
+      !session.dragged &&
+      this.activePointers.size === 1 &&
+      this.pinchSession === undefined;
+
+    this.activePointers.delete(event.pointerId);
+
+    if (isSessionPointer) {
+      this.panSession = undefined;
+    }
+
+    if (this.activePointers.size < 2) {
+      this.pinchSession = undefined;
+    }
+
+    if (wasTap) {
+      this.isPanning.set(false);
+      this.onCanvasTap(event);
+      return;
+    }
+
+    if (this.activePointers.size === 1 && this.boardTool() === 'pan') {
+      const remaining = this.activePointers.entries().next().value;
+      if (!remaining) {
+        this.isPanning.set(false);
+        return;
+      }
+      const [pointerId, point] = remaining;
+      this.panSession = {
+        pointerId,
+        startX: point.x,
+        startY: point.y,
+        originX: this.viewPanX(),
+        originY: this.viewPanY(),
+        dragged: true,
+      };
+      this.isPanning.set(true);
+      return;
+    }
+
+    this.isPanning.set(false);
+  }
+
+  protected onViewWheel(event: WheelEvent): void {
+    event.preventDefault();
+    const viewport = this.viewportRef()?.nativeElement;
+    if (!viewport) {
+      return;
+    }
+    const rect = viewport.getBoundingClientRect();
+    const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+    this.zoomAt(event.clientX - rect.left, event.clientY - rect.top, this.viewZoom() * factor);
+  }
+
+  protected resetView(): void {
+    this.viewZoom.set(1);
+    this.viewPanX.set(0);
+    this.viewPanY.set(0);
+  }
+
   private preloadSprites(): void {
     for (const id of SPRITE_IDS) {
       const image = new Image();
@@ -281,22 +575,30 @@ export class GameBoard implements OnInit {
     if (this.isTrialRunning() || this.isMovingTower()) {
       return;
     }
+    if (this.selectedTypeId() === typeId) {
+      this.enterHandMode();
+      this.message.set(undefined);
+      return;
+    }
     this.selectedTypeId.set(typeId);
     this.selectedTowerId.set(undefined);
-    this.message.set(undefined);
+    this.targetingOpen.set(false);
+    this.boardTool.set('edit');
+    this.message.set('Touchez une case libre pour poser la tour.');
   }
 
-  protected sellSelected(): void {
+  protected deleteSelected(): void {
     const towerId = this.selectedTowerId();
     if (!towerId || this.isTrialRunning() || this.isMovingTower()) {
       return;
     }
-    const refund = this.engine.sellTower(towerId);
-    if (refund === undefined) {
+    const recovered = this.engine.deleteTower(towerId);
+    if (recovered === undefined) {
       return;
     }
     this.selectedTowerId.set(undefined);
-    this.message.set(`Tour vendue (+${refund}).`);
+    this.targetingOpen.set(false);
+    this.message.set(`Tour supprimée (+${recovered}).`);
     this.syncFromEngine();
   }
 
@@ -306,49 +608,31 @@ export class GameBoard implements OnInit {
     if (!towerId || this.isTrialRunning()) {
       return;
     }
+    this.boardTool.set('edit');
     this.movingTowerId.set(towerId);
-    this.message.set('Cliquez une case libre pour déplacer la tour.');
+    this.targetingOpen.set(false);
+    this.message.set('Touchez une case libre pour déplacer la tour.');
   }
 
   protected cancelMovingTower(): void {
     this.movingTowerId.set(undefined);
+    this.boardTool.set('pan');
     this.message.set(undefined);
   }
 
-  /** Abandonne les poses/ventes/déplacements de la phase Défense en cours et revient à la forteresse de départ. */
+  /** Abandonne les poses/suppressions/déplacements de la phase Défense en cours et revient à la forteresse de départ. */
   protected resetDefenseSession(): void {
     if (this.phase() !== 'defense' || this.isTrialRunning()) {
       return;
     }
     this.engine.resetDefenseSession();
     this.selectedTowerId.set(undefined);
+    this.selectedTypeId.set(undefined);
     this.movingTowerId.set(undefined);
+    this.boardTool.set('pan');
+    this.targetingOpen.set(false);
     this.message.set(undefined);
     this.syncFromEngine();
-  }
-
-  /** Prix de revente : plein tarif si posée ce palier-ci, réduit si héritée d'un palier précédent. */
-  protected refundFor(tower: TowerInstance): number {
-    const type = findTowerType(tower.typeId);
-    return type ? sellRefund(type.cost, tower.placedAtPalier === this.palier()) : 0;
-  }
-
-  protected describeWave(wave: Wave | undefined): string {
-    if (!wave || wave.lanes.every((lane) => lane.units.length === 0)) {
-      return '—';
-    }
-    return wave.lanes
-      .map((lane, index) => {
-        const counts = new Map<string, number>();
-        for (const unit of lane.units) {
-          counts.set(unit.type, (counts.get(unit.type) ?? 0) + 1);
-        }
-        const parts = Array.from(counts.entries()).map(
-          ([type, count]) => `${findMonsterType(type)?.name ?? type} ×${count}`,
-        );
-        return `Chemin ${index + 1} (${lane.path.id}) : ${parts.join(', ') || 'vide'}`;
-      })
-      .join(' | ');
   }
 
   /** Lance vagueCourante contre la forteresse actuelle. */
@@ -358,6 +642,9 @@ export class GameBoard implements OnInit {
       return;
     }
     this.selectedTowerId.set(undefined);
+    this.movingTowerId.set(undefined);
+    this.closeDrawers();
+    this.boardTool.set('pan');
     this.message.set(undefined);
     this.activeTrial = this.engine.startDefenseTrial();
     this.trialChateauHp.set(this.activeTrial.getChateauHp());
@@ -377,19 +664,34 @@ export class GameBoard implements OnInit {
     if (this.phase() !== 'attack' || this.isTrialRunning()) {
       return;
     }
+    this.boardTool.set('edit');
+    this.targetingOpen.set(false);
     this.activeLaneIndex.set(undefined);
     const spawns = this.map()?.spawns ?? [];
     if (spawns.length === 1) {
       this.drawingPath.set([{ x: spawns[0].x, y: spawns[0].y }]);
-      this.message.set('Cliquez des cases adjacentes jusqu’au château.');
+      this.message.set('Touchez des cases jusqu’au château.');
       return;
     }
     this.drawingPath.set([]);
-    this.message.set('Cliquez une case de spawn pour démarrer le tracé.');
+    this.message.set('Touchez un spawn pour démarrer.');
   }
 
   protected cancelTracing(): void {
     this.drawingPath.set(undefined);
+    this.boardTool.set('pan');
+    if (this.retracing) {
+      const { index, units, path } = this.retracing;
+      this.engine.addPath(path);
+      this.lanes.update((lanes) => {
+        const next = [...lanes];
+        next.splice(Math.min(index, next.length), 0, { path, units });
+        return next;
+      });
+      this.activeLaneIndex.set(Math.min(index, this.lanes().length - 1));
+      this.retracing = undefined;
+      this.syncFromEngine();
+    }
     this.message.set(undefined);
   }
 
@@ -398,10 +700,38 @@ export class GameBoard implements OnInit {
   }
 
   protected selectLane(index: number): void {
-    if (this.isTrialRunning()) {
+    if (this.isTrialRunning() || this.isDrawingPath()) {
+      return;
+    }
+    if (this.activeLaneIndex() === index && this.targetingOpen()) {
+      this.targetingOpen.set(false);
+      this.activeLaneIndex.set(undefined);
       return;
     }
     this.activeLaneIndex.set(index);
+    this.targetingOpen.set(true);
+  }
+
+  /** Relance le tracé d'une voie existante en conservant sa file de monstres. */
+  protected startRetracing(index: number): void {
+    if (this.phase() !== 'attack' || this.isTrialRunning() || this.isDrawingPath()) {
+      return;
+    }
+    const lane = this.lanes()[index];
+    if (!lane) {
+      return;
+    }
+    this.retracing = {
+      index,
+      units: lane.units.map((unit) => ({ ...unit })),
+      path: { ...lane.path, nodes: lane.path.nodes.map((node) => [node[0], node[1]] as [number, number]) },
+    };
+    this.engine.removePath(lane.path.id);
+    this.lanes.update((lanes) => lanes.filter((_, i) => i !== index));
+    this.activeLaneIndex.set(undefined);
+    this.targetingOpen.set(false);
+    this.syncFromEngine();
+    this.startTracing();
   }
 
   /** Supprime une voie : son tracé disparaît aussi de la carte (plus de référence fantôme au dessin). */
@@ -413,19 +743,55 @@ export class GameBoard implements OnInit {
     if (!lane) {
       return;
     }
-    for (const unit of lane.units) {
-      this.engine.recordAttackUnitRemoval(unit.type, unit.addedAtAttempt);
-    }
     this.engine.removePath(lane.path.id);
     this.lanes.update((lanes) => lanes.filter((_, i) => i !== index));
     if (this.activeLaneIndex() === index) {
       this.activeLaneIndex.set(undefined);
+      this.targetingOpen.set(false);
+    } else if ((this.activeLaneIndex() ?? -1) > index) {
+      this.activeLaneIndex.update((current) => (current === undefined ? undefined : current - 1));
     }
     this.syncFromEngine();
   }
 
-  protected laneLabel(lane: LaneDraft, index: number): string {
-    return `Chemin ${index + 1} — tracé, ${lane.path.nodes.length} cases`;
+  protected renameActiveLane(rawName: string): void {
+    const index = this.activeLaneIndex();
+    if (index === undefined) {
+      return;
+    }
+    this.renameLane(index, rawName);
+  }
+
+  protected removeActiveLane(): void {
+    const index = this.activeLaneIndex();
+    if (index === undefined) {
+      return;
+    }
+    this.removeLane(index);
+  }
+
+  protected retraceActiveLane(): void {
+    const index = this.activeLaneIndex();
+    if (index === undefined) {
+      return;
+    }
+    this.startRetracing(index);
+  }
+
+  protected moveActiveQueueUnit(unitIndex: number, direction: -1 | 1): void {
+    const laneIndex = this.activeLaneIndex();
+    if (laneIndex === undefined) {
+      return;
+    }
+    this.moveQueueUnit(laneIndex, unitIndex, direction);
+  }
+
+  protected removeActiveQueueUnit(unitIndex: number): void {
+    const laneIndex = this.activeLaneIndex();
+    if (laneIndex === undefined) {
+      return;
+    }
+    this.removeQueueUnit(laneIndex, unitIndex);
   }
 
   /** Renomme une voie ; nom vide = retour à l'étiquette par défaut. */
@@ -447,12 +813,9 @@ export class GameBoard implements OnInit {
     if (!type || type.cost > this.getAttackBudgetRemaining()) {
       return;
     }
-    const addedAtAttempt = this.engine.getAttackAttempt();
     this.lanes.update((lanes) =>
       lanes.map((lane, i) =>
-        i === laneIndex
-          ? { ...lane, units: [...lane.units, { type: typeId, addedAtAttempt }] }
-          : lane,
+        i === laneIndex ? { ...lane, units: [...lane.units, { type: typeId }] } : lane,
       ),
     );
   }
@@ -460,10 +823,6 @@ export class GameBoard implements OnInit {
   protected removeQueueUnit(laneIndex: number, unitIndex: number): void {
     if (this.isTrialRunning()) {
       return;
-    }
-    const unit = this.lanes()[laneIndex]?.units[unitIndex];
-    if (unit) {
-      this.engine.recordAttackUnitRemoval(unit.type, unit.addedAtAttempt);
     }
     this.lanes.update((lanes) =>
       lanes.map((lane, i) =>
@@ -492,15 +851,11 @@ export class GameBoard implements OnInit {
     );
   }
 
-  protected monsterName(typeId: string): string {
-    return findMonsterType(typeId)?.name ?? typeId;
-  }
-
   /** Recharge les voies en cours de composition depuis le plan d'attaque sauvegardé par le moteur. */
   private loadAttackPlan(): LaneDraft[] {
     return this.engine.getAttackPlan().lanes.map((lane) => ({
       path: lane.path,
-      units: lane.units.map((unit) => ({ ...unit, addedAtAttempt: 0 })),
+      units: lane.units.map((unit) => ({ ...unit })),
     }));
   }
 
@@ -509,13 +864,11 @@ export class GameBoard implements OnInit {
     if (this.phase() !== 'attack' || this.isTrialRunning() || this.isDrawingPath()) {
       return;
     }
-    this.engine.resetAttackSession();
     this.lanes.set(this.loadAttackPlan());
     this.activeLaneIndex.set(undefined);
     this.message.set(undefined);
   }
 
-  /** Convertit des voies en cours de composition en `Wave` propre (sans le bookkeeping de tentative). */
   private toWave(lanes: readonly LaneDraft[]): Wave {
     return {
       lanes: lanes.map((lane) => ({
@@ -540,6 +893,8 @@ export class GameBoard implements OnInit {
     }
     const wave = this.toWave(activeLanes);
     this.pendingAttackWave = wave;
+    this.closeDrawers();
+    this.boardTool.set('pan');
     this.message.set(undefined);
     this.activeTrial = this.engine.startAttackTrial(wave);
     this.trialChateauHp.set(this.activeTrial.getChateauHp());
@@ -551,19 +906,23 @@ export class GameBoard implements OnInit {
 
   // ---- Interaction canvas commune --------------------------------------
 
-  protected onCanvasClick(event: MouseEvent): void {
+  /**
+   * Tap court.
+   * - Mode Main : sélectionner une tour / voie (inspection), pas de pose.
+   * - Mode Pose/Éditer : pose, tracé, déplacement.
+   */
+  protected onCanvasTap(event: PointerEvent): void {
     const coord = this.toGridCoord(event);
     if (!coord) {
       return;
     }
 
-    if (this.phase() === 'attack' && this.isDrawingPath()) {
-      this.handleTracingClick(coord);
-      return;
-    }
-
     if (this.phase() === 'attack') {
       if (this.isTrialRunning()) {
+        return;
+      }
+      if (this.isDrawingPath()) {
+        this.handleTracingClick(coord);
         return;
       }
       const laneIndex = this.lanes().findIndex((lane) => this.pathContainsCell(lane.path, coord));
@@ -585,6 +944,7 @@ export class GameBoard implements OnInit {
         return;
       }
       this.movingTowerId.set(undefined);
+      this.boardTool.set('pan');
       this.message.set(undefined);
       this.syncFromEngine();
       this.selectedTowerId.set(movingId);
@@ -595,23 +955,36 @@ export class GameBoard implements OnInit {
       (tower) => tower.position.x === coord.x && tower.position.y === coord.y,
     );
     if (existing) {
+      this.selectedTypeId.set(undefined);
+      this.boardTool.set('pan');
       this.selectedTowerId.set(existing.id);
       this.message.set(undefined);
+      this.targetingOpen.set(true);
       return;
     }
 
-    const result = this.engine.placeTower(this.selectedTypeId(), coord);
-    if (!result.ok) {
+    // Mode Main : pas de pose sur case vide.
+    if (this.boardTool() === 'pan' || !this.selectedTypeId()) {
       this.selectedTowerId.set(undefined);
+      this.targetingOpen.set(false);
+      return;
+    }
+
+    const typeId = this.selectedTypeId();
+    if (!typeId) {
+      return;
+    }
+    const result = this.engine.placeTower(typeId, coord);
+    if (!result.ok) {
       this.message.set(FAILURE_MESSAGES[result.reason] ?? 'Placement impossible.');
       return;
     }
     this.message.set(undefined);
     this.syncFromEngine();
-    const placed = this.towers().find(
-      (tower) => tower.position.x === coord.x && tower.position.y === coord.y,
-    );
-    this.selectedTowerId.set(placed?.id);
+    // Après pose : retour en mode main.
+    this.selectedTypeId.set(undefined);
+    this.boardTool.set('pan');
+    this.selectedTowerId.set(undefined);
   }
 
   /** Vrai si `coord` tombe sur une case parcourue par `path` (nœuds inclus, segments interpolés). */
@@ -680,22 +1053,39 @@ export class GameBoard implements OnInit {
 
     const nextPath = [...path, ...filledCells];
     if (reachedChateau) {
+      const retracing = this.retracing;
+      const newPath: MapPath = {
+        id: retracing?.path.id ?? `custom-${this.customLaneSequence++}`,
+        name: retracing?.path.name,
+        nodes: nextPath.map((p) => [p.x, p.y]),
+      };
       const newLane: LaneDraft = {
-        path: { id: `custom-${this.customLaneSequence++}`, nodes: nextPath.map((p) => [p.x, p.y]) },
-        units: [],
+        path: newPath,
+        units: retracing?.units.map((unit) => ({ ...unit })) ?? [],
       };
       this.engine.addPath(newLane.path);
-      this.lanes.update((lanes) => [...lanes, newLane]);
-      this.activeLaneIndex.set(this.lanes().length - 1);
+      const insertAt = retracing ? Math.min(retracing.index, this.lanes().length) : this.lanes().length;
+      this.lanes.update((lanes) => {
+        const next = [...lanes];
+        next.splice(insertAt, 0, newLane);
+        return next;
+      });
+      this.activeLaneIndex.set(insertAt);
+      this.retracing = undefined;
       this.drawingPath.set(undefined);
+      this.boardTool.set('pan');
       this.message.set(undefined);
+      this.targetingOpen.set(true);
       this.syncFromEngine();
       return;
     }
     this.drawingPath.set(nextPath);
   }
 
-  protected onCanvasMove(event: MouseEvent): void {
+  protected onCanvasMove(event: { clientX: number; clientY: number }): void {
+    if (this.isPanning()) {
+      return;
+    }
     this.hoverCell.set(this.toGridCoord(event));
     this.boardTooltip.set(this.computeBoardTooltip(event));
   }
@@ -705,45 +1095,17 @@ export class GameBoard implements OnInit {
     this.boardTooltip.set(undefined);
   }
 
-  /** Caractéristiques d'un type de tour, formatées pour l'infobulle. */
-  protected towerStats(type: TowerType): TooltipStat[] {
-    const stats: TooltipStat[] = [
-      { label: 'Coût', value: `${type.cost}` },
-      { label: 'Portée', value: `${type.range} cases` },
-      { label: 'Dégâts', value: `${type.damage}` },
-      { label: 'Cadence', value: `${type.cooldown} ticks` },
-    ];
-    if (type.splashRadius) {
-      stats.push({ label: 'Zone', value: `${type.splashRadius} cases` });
-    }
-    if (type.slowFactor) {
-      stats.push({
-        label: 'Ralentissement',
-        value: `-${Math.round((1 - type.slowFactor) * 100)}% pendant ${type.slowDuration} ticks`,
-      });
-    }
-    if (type.armorBonus) {
-      stats.push({ label: 'Bonus anti-blindé', value: `×${type.armorBonus}` });
-    }
-    return stats;
-  }
-
-  /** Caractéristiques d'un type de monstre, formatées pour l'infobulle. */
-  protected monsterStats(type: MonsterType): TooltipStat[] {
-    return [
-      { label: 'PV', value: `${type.hp}` },
-      { label: 'Vitesse', value: `${type.speed} case/tick` },
-      { label: 'Blindage', value: type.armored ? 'Blindé' : 'Non blindé' },
-      { label: 'Dégâts au château', value: `${type.chateauDamage}` },
-    ];
-  }
-
-  /** Détermine la tour posée ou le monstre survolé par la souris, pour affichage d'une infobulle sur le plateau. */
-  private computeBoardTooltip(event: MouseEvent): BoardTooltip | undefined {
+  /** Infobulle au survol : positionnée en coords viewport (indépendant du zoom/pan). */
+  private computeBoardTooltip(event: { clientX: number; clientY: number }): BoardTooltip | undefined {
     const coord = this.toGridCoord(event);
     if (!coord) {
       return undefined;
     }
+
+    const viewport = this.viewportRef()?.nativeElement;
+    const rect = viewport?.getBoundingClientRect();
+    const left = rect ? event.clientX - rect.left + 14 : 14;
+    const top = rect ? event.clientY - rect.top + 14 : 14;
 
     const tower = this.towers().find(
       (t) => t.position.x === coord.x && t.position.y === coord.y,
@@ -754,11 +1116,11 @@ export class GameBoard implements OnInit {
         return undefined;
       }
       return {
-        left: event.offsetX + 14,
-        top: event.offsetY + 14,
+        left,
+        top,
         heading: type.name,
         description: type.description,
-        stats: this.towerStats(type),
+        stats: formatTowerStats(type),
       };
     }
 
@@ -775,11 +1137,11 @@ export class GameBoard implements OnInit {
         return undefined;
       }
       return {
-        left: event.offsetX + 14,
-        top: event.offsetY + 14,
+        left,
+        top,
         heading: type.name,
         description: type.description,
-        stats: this.monsterStats(type),
+        stats: formatMonsterStats(type),
       };
     }
 
@@ -813,7 +1175,11 @@ export class GameBoard implements OnInit {
     const shots = trial.getShotsThisTick();
     if (shots.length > 0) {
       this.projectiles.push(
-        ...shots.map((shot) => ({ from: shot.towerPosition, to: shot.targetPosition, firedAtMs })),
+        ...shots.map((shot) => ({
+          from: cellCenterPx(shot.towerPosition),
+          to: worldToPx(shot.targetPosition),
+          firedAtMs,
+        })),
       );
       const splashShots = shots.filter((shot): shot is typeof shot & { splashRadius: number } =>
         Boolean(shot.splashRadius),
@@ -823,8 +1189,8 @@ export class GameBoard implements OnInit {
         const impactAtMs = firedAtMs + PROJECTILE_DURATION_MS;
         this.splashes.push(
           ...splashShots.map((shot) => ({
-            position: shot.targetPosition,
-            radius: shot.splashRadius,
+            position: worldToPx(shot.targetPosition),
+            radiusPx: shot.splashRadius * WORLD_SCALE,
             firedAtMs: impactAtMs,
           })),
         );
@@ -847,6 +1213,9 @@ export class GameBoard implements OnInit {
         this.engine.resolveDefenseSuccess();
         this.lanes.set(this.loadAttackPlan());
         this.activeLaneIndex.set(undefined);
+        this.selectedTypeId.set(undefined);
+        this.boardTool.set('pan');
+        this.targetingOpen.set(false);
         this.message.set('Défense réussie ! La forteresse est figée : phase Attaque.');
         this.resetTrialDisplay();
       } else {
@@ -859,16 +1228,17 @@ export class GameBoard implements OnInit {
           this.engine.resolveAttackSuccess(wave);
         }
         // Le plan d'attaque n'est pas remis à zéro : il devient le plan sauvegardé, point de
-        // départ du prochain cycle, ses affectations désormais établies (retrait payant) —
-        // CONCEPTION.md §5.2, §11 décision 12.
+        // départ du prochain cycle — CONCEPTION.md §5.2, §11 décision 12.
         this.lanes.set(this.loadAttackPlan());
         this.activeLaneIndex.set(undefined);
+        this.selectedTypeId.set(undefined);
+        this.boardTool.set('pan');
+        this.targetingOpen.set(false);
         this.message.set(
           `Vague victorieuse (${trial.getBreachCount()} brèche(s)) ! Palier ${this.engine.getPalier()} — retour en Défense.`,
         );
         this.resetTrialDisplay();
       } else {
-        this.engine.recordFailedAttackAttempt();
         this.message.set('Vague anéantie, aucune brèche. Recomposez et réessayez.');
       }
     }
@@ -918,39 +1288,153 @@ export class GameBoard implements OnInit {
       this.decor.set(generateDecor(map));
       this.engine.startRun(map, catalogEntry.startingData);
       this.lanes.set(this.loadAttackPlan());
+      this.resetView();
       this.syncFromEngine();
     } catch {
       this.message.set('Impossible de charger la carte.');
     }
   }
 
-  /** Position du curseur en coordonnées de grille non arrondies (utile pour viser les monstres en mouvement). */
-  private toFractionalCoord(event: MouseEvent): { x: number; y: number } | undefined {
-    const canvas = this.canvasRef()?.nativeElement;
-    if (!canvas) {
+  /** Position du curseur en world-space (unité = distance entre centres voisins). */
+  private toFractionalCoord(event: { clientX: number; clientY: number }): { x: number; y: number } | undefined {
+    const px = this.clientToCanvasPx(event.clientX, event.clientY);
+    if (!px) {
       return undefined;
     }
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     return {
-      x: ((event.clientX - rect.left) * scaleX) / CELL_SIZE,
-      y: ((event.clientY - rect.top) * scaleY) / CELL_SIZE,
+      x: (px.x - ORIGIN_X) / WORLD_SCALE,
+      y: (px.y - ORIGIN_Y) / WORLD_SCALE,
     };
   }
 
-  private toGridCoord(event: MouseEvent): GridCoord | undefined {
+  private toGridCoord(event: { clientX: number; clientY: number }): GridCoord | undefined {
     const map = this.map();
-    const fractional = this.toFractionalCoord(event);
-    if (!map || !fractional) {
+    const px = this.clientToCanvasPx(event.clientX, event.clientY);
+    if (!map || !px) {
       return undefined;
     }
-    const x = Math.floor(fractional.x);
-    const y = Math.floor(fractional.y);
-    if (x < 0 || y < 0 || x >= map.grid.cols || y >= map.grid.rows) {
+    const coord = worldToHex(px.x - ORIGIN_X, px.y - ORIGIN_Y, CELL_SIZE);
+    if (coord.x < 0 || coord.y < 0 || coord.x >= map.grid.cols || coord.y >= map.grid.rows) {
       return undefined;
     }
-    return { x, y };
+    return coord;
+  }
+
+  /**
+   * Convertit une position client (écran) en pixels canvas bitmap,
+   * en tenant compte du pan/zoom CSS de la caméra.
+   */
+  private clientToCanvasPx(clientX: number, clientY: number): { x: number; y: number } | undefined {
+    const canvas = this.canvasRef()?.nativeElement;
+    const viewport = this.viewportRef()?.nativeElement;
+    if (!canvas || !viewport) {
+      return undefined;
+    }
+    const layoutW = canvas.offsetWidth;
+    const layoutH = canvas.offsetHeight;
+    if (layoutW <= 0 || layoutH <= 0) {
+      return undefined;
+    }
+    const rect = viewport.getBoundingClientRect();
+    const zoom = this.viewZoom();
+    const layoutX = (clientX - rect.left - this.viewPanX()) / zoom;
+    const layoutY = (clientY - rect.top - this.viewPanY()) / zoom;
+    return {
+      x: layoutX * (canvas.width / layoutW),
+      y: layoutY * (canvas.height / layoutH),
+    };
+  }
+
+  private beginPinch(): void {
+    const points = [...this.activePointers.values()];
+    if (points.length < 2) {
+      return;
+    }
+    const [a, b] = points;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (dist < 1) {
+      return;
+    }
+    const viewport = this.viewportRef()?.nativeElement;
+    const rect = viewport?.getBoundingClientRect();
+    this.pinchSession = {
+      startDist: dist,
+      startZoom: this.viewZoom(),
+      startMidX: (a.x + b.x) / 2 - (rect?.left ?? 0),
+      startMidY: (a.y + b.y) / 2 - (rect?.top ?? 0),
+      originPanX: this.viewPanX(),
+      originPanY: this.viewPanY(),
+    };
+  }
+
+  private updatePinch(): void {
+    const session = this.pinchSession;
+    const points = [...this.activePointers.values()];
+    if (!session || points.length < 2) {
+      return;
+    }
+    const [a, b] = points;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    if (dist < 1) {
+      return;
+    }
+    const viewport = this.viewportRef()?.nativeElement;
+    const rect = viewport?.getBoundingClientRect();
+    const midX = (a.x + b.x) / 2 - (rect?.left ?? 0);
+    const midY = (a.y + b.y) / 2 - (rect?.top ?? 0);
+    const contentX = (session.startMidX - session.originPanX) / session.startZoom;
+    const contentY = (session.startMidY - session.originPanY) / session.startZoom;
+    const zoom = Math.min(
+      VIEW_ZOOM_MAX,
+      Math.max(VIEW_ZOOM_MIN, session.startZoom * (dist / session.startDist)),
+    );
+    this.viewZoom.set(zoom);
+    this.setPan(midX - contentX * zoom, midY - contentY * zoom);
+  }
+
+  /** Zoom centré sur un point du viewport (coords locales au wrap). */
+  private zoomAt(viewportX: number, viewportY: number, nextZoom: number): void {
+    const zoom = Math.min(VIEW_ZOOM_MAX, Math.max(VIEW_ZOOM_MIN, nextZoom));
+    const prev = this.viewZoom();
+    if (zoom === prev) {
+      this.clampPan();
+      return;
+    }
+    const panX = viewportX - ((viewportX - this.viewPanX()) * zoom) / prev;
+    const panY = viewportY - ((viewportY - this.viewPanY()) * zoom) / prev;
+    this.viewZoom.set(zoom);
+    this.setPan(panX, panY);
+  }
+
+  private setPan(x: number, y: number): void {
+    this.viewPanX.set(x);
+    this.viewPanY.set(y);
+    this.clampPan();
+  }
+
+  /** Empêche de faire sortir entièrement la carte du viewport. */
+  private clampPan(): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    const viewport = this.viewportRef()?.nativeElement;
+    if (!canvas || !viewport) {
+      return;
+    }
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    const zoom = this.viewZoom();
+    const scaledW = canvas.offsetWidth * zoom;
+    const scaledH = canvas.offsetHeight * zoom;
+    const marginX = Math.min(PAN_EDGE_MARGIN_PX, vw * 0.2);
+    const marginY = Math.min(PAN_EDGE_MARGIN_PX, vh * 0.2);
+
+    // Toujours un peu de jeu (même à ×1), sinon le pan est impossible et conflict avec la pose.
+    const minX = vw - scaledW - marginX;
+    const maxX = marginX;
+    const minY = vh - scaledH - marginY;
+    const maxY = marginY;
+
+    this.viewPanX.set(Math.min(maxX, Math.max(minX, this.viewPanX())));
+    this.viewPanY.set(Math.min(maxY, Math.max(minY, this.viewPanY())));
   }
 
   private syncFromEngine(): void {
@@ -965,9 +1449,30 @@ export class GameBoard implements OnInit {
     this.vagueCourante.set(this.engine.getVagueCourante());
   }
 
+  /** Vrai si le type de tour courant peut être posé sur `coord` (grille, occupation, budget). */
+  private canPlaceSelectedTypeAt(coord: GridCoord): boolean {
+    const typeId = this.selectedTypeId();
+    if (!typeId) {
+      return false;
+    }
+    const type = findTowerType(typeId);
+    return canPlaceTower(
+      this.map(),
+      this.towers(),
+      type,
+      coord,
+      this.remainingBudget(),
+    ).ok;
+  }
+
   /** Centre + portée à prévisualiser sur les chemins : la tour sélectionnée, ou celle en attente de pose au survol. */
   private computeRangePreview(): { center: GridCoord; range: number } | undefined {
-    if (this.phase() !== 'defense' || this.isTrialRunning() || this.isMovingTower()) {
+    if (
+      this.phase() !== 'defense' ||
+      this.boardTool() !== 'edit' ||
+      this.isTrialRunning() ||
+      this.isMovingTower()
+    ) {
       return undefined;
     }
     const selected = this.selectedTower();
@@ -979,10 +1484,11 @@ export class GameBoard implements OnInit {
       return undefined;
     }
     const hover = this.hoverCell();
-    if (!hover) {
+    const typeId = this.selectedTypeId();
+    if (!hover || !typeId || !this.canPlaceSelectedTypeAt(hover)) {
       return undefined;
     }
-    const type = findTowerType(this.selectedTypeId());
+    const type = findTowerType(typeId);
     return type ? { center: hover, range: type.range } : undefined;
   }
 
@@ -1005,7 +1511,31 @@ export class GameBoard implements OnInit {
         cells.push(...cellsBetween({ x: ax, y: ay }, { x: bx, y: by }));
       }
     }
-    return cells.filter((cell) => Math.hypot(cell.x - center.x, cell.y - center.y) <= range);
+    return cells.filter((cell) => {
+      const cellWorld = hexToWorld(cell);
+      const centerWorld = hexToWorld(center);
+      return Math.hypot(cellWorld.x - centerWorld.x, cellWorld.y - centerWorld.y) <= range;
+    });
+  }
+
+  /**
+   * Adapte la taille CSS du canvas pour qu’il tienne entièrement dans le viewport
+   * (contain), sans provoquer de scroll de page.
+   */
+  private fitCanvasToViewport(): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    const viewport = this.viewportRef()?.nativeElement;
+    if (!canvas || !viewport || canvas.width <= 0 || canvas.height <= 0) {
+      return;
+    }
+    const availableW = viewport.clientWidth;
+    const availableH = viewport.clientHeight;
+    if (availableW <= 0 || availableH <= 0) {
+      return;
+    }
+    const scale = Math.min(availableW / canvas.width, availableH / canvas.height);
+    canvas.style.width = `${canvas.width * scale}px`;
+    canvas.style.height = `${canvas.height * scale}px`;
   }
 
   private draw(): void {
@@ -1014,11 +1544,15 @@ export class GameBoard implements OnInit {
     if (!canvas || !map) {
       return;
     }
-    const width = map.grid.cols * CELL_SIZE;
-    const height = map.grid.rows * CELL_SIZE;
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
+    const { width, height } = hexGridPixelSize(map.grid.cols, map.grid.rows, CELL_SIZE);
+    const canvasWidth = Math.ceil(width + 2 * CANVAS_PAD);
+    const canvasHeight = Math.ceil(height + 2 * CANVAS_PAD);
+    if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      this.fitCanvasToViewport();
+    } else if (!canvas.style.width) {
+      this.fitCanvasToViewport();
     }
 
     const ctx = canvas.getContext('2d');
@@ -1033,28 +1567,20 @@ export class GameBoard implements OnInit {
 
     // Bords de la grille : jamais constructibles (CONCEPTION.md §4).
     ctx.fillStyle = '#1c2230';
-    for (let x = 0; x < map.grid.cols; x++) {
-      ctx.fillRect(x * CELL_SIZE, 0, CELL_SIZE, CELL_SIZE);
-      ctx.fillRect(x * CELL_SIZE, (map.grid.rows - 1) * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-    }
     for (let y = 0; y < map.grid.rows; y++) {
-      ctx.fillRect(0, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-      ctx.fillRect((map.grid.cols - 1) * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      for (let x = 0; x < map.grid.cols; x++) {
+        if (isBorderCell(map, { x, y })) {
+          this.fillHex(ctx, { x, y });
+        }
+      }
     }
 
     ctx.strokeStyle = '#2a2f3a';
     ctx.lineWidth = 1;
-    for (let x = 0; x <= map.grid.cols; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * CELL_SIZE, 0);
-      ctx.lineTo(x * CELL_SIZE, map.grid.rows * CELL_SIZE);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= map.grid.rows; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * CELL_SIZE);
-      ctx.lineTo(map.grid.cols * CELL_SIZE, y * CELL_SIZE);
-      ctx.stroke();
+    for (let y = 0; y < map.grid.rows; y++) {
+      for (let x = 0; x < map.grid.cols; x++) {
+        this.strokeHex(ctx, { x, y });
+      }
     }
 
     const isAttackPhase = this.phase() === 'attack';
@@ -1065,10 +1591,7 @@ export class GameBoard implements OnInit {
     for (const path of map.paths) {
       ctx.strokeStyle = isAttackPhase ? hexToRgba(biome.path, 0.25) : biome.path;
       ctx.lineWidth = CELL_SIZE * 0.4;
-      this.strokePolyline(
-        ctx,
-        path.nodes.map(([x, y]) => ({ x, y })),
-      );
+      this.strokePolyline(ctx, expandPathCells(path));
     }
 
     // Portion des chemins atteignable par la tour sélectionnée (ou celle sur le point d'être posée).
@@ -1076,7 +1599,7 @@ export class GameBoard implements OnInit {
     if (rangePreview) {
       ctx.fillStyle = 'rgba(120, 255, 170, 0.45)';
       for (const cell of this.pathCellsInRange(map, rangePreview.center, rangePreview.range)) {
-        ctx.fillRect(cell.x * CELL_SIZE + 4, cell.y * CELL_SIZE + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+        this.fillHex(ctx, cell);
       }
     }
 
@@ -1085,10 +1608,7 @@ export class GameBoard implements OnInit {
       const isActive = index === this.activeLaneIndex();
       ctx.strokeStyle = isActive ? '#ffe08c' : 'rgba(255, 224, 140, 0.55)';
       ctx.lineWidth = CELL_SIZE * 0.32;
-      this.strokePolyline(
-        ctx,
-        lane.path.nodes.map(([x, y]) => ({ x, y })),
-      );
+      this.strokePolyline(ctx, expandPathCells(lane.path));
     });
 
     // Tracé en cours : ligne pointillée vive + un point à chaque case cliquée.
@@ -1102,14 +1622,9 @@ export class GameBoard implements OnInit {
 
       ctx.fillStyle = '#7be0ff';
       for (const point of drawing) {
+        const center = cellCenterPx(point);
         ctx.beginPath();
-        ctx.arc(
-          point.x * CELL_SIZE + CELL_SIZE / 2,
-          point.y * CELL_SIZE + CELL_SIZE / 2,
-          4,
-          0,
-          Math.PI * 2,
-        );
+        ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -1120,21 +1635,29 @@ export class GameBoard implements OnInit {
         this.drawRangeRing(ctx, spawn.x, spawn.y, 0.85, '#7be0ff');
       }
       ctx.fillStyle = '#7a5c2e';
-      ctx.fillRect(spawn.x * CELL_SIZE + 4, spawn.y * CELL_SIZE + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+      this.fillHex(ctx, spawn);
     }
 
-    const chateauCx = map.chateau.x * CELL_SIZE + CELL_SIZE / 2;
-    const chateauCy = map.chateau.y * CELL_SIZE + CELL_SIZE / 2;
-    if (!this.drawSprite(ctx, 'chateau', chateauCx, chateauCy, CELL_SIZE * 0.9)) {
+    const chateauCenter = cellCenterPx(map.chateau);
+    if (!this.drawSprite(ctx, 'chateau', chateauCenter.x, chateauCenter.y, CELL_SIZE * 0.9)) {
       ctx.fillStyle = '#9b9086';
       ctx.beginPath();
-      ctx.arc(chateauCx, chateauCy, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
+      ctx.arc(chateauCenter.x, chateauCenter.y, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
       ctx.fill();
     }
 
     const hover = this.hoverCell();
-    if (hover && !this.selectedTowerId() && !this.isTrialRunning() && this.phase() === 'defense') {
-      const type = findTowerType(this.selectedTypeId());
+    const selectedTypeId = this.selectedTypeId();
+    if (
+      hover &&
+      selectedTypeId &&
+      this.boardTool() === 'edit' &&
+      !this.selectedTowerId() &&
+      !this.isTrialRunning() &&
+      this.phase() === 'defense' &&
+      this.canPlaceSelectedTypeAt(hover)
+    ) {
+      const type = findTowerType(selectedTypeId);
       if (type) {
         this.drawRangeRing(ctx, hover.x, hover.y, type.range, 'rgba(120, 200, 255, 0.5)');
       }
@@ -1143,8 +1666,7 @@ export class GameBoard implements OnInit {
     for (const tower of this.towers()) {
       const isSelected = tower.id === this.selectedTowerId();
       const type = findTowerType(tower.typeId);
-      const cx = tower.position.x * CELL_SIZE + CELL_SIZE / 2;
-      const cy = tower.position.y * CELL_SIZE + CELL_SIZE / 2;
+      const center = cellCenterPx(tower.position);
 
       if (isSelected && type) {
         this.drawRangeRing(
@@ -1156,31 +1678,30 @@ export class GameBoard implements OnInit {
         );
       }
 
-      if (!this.drawSprite(ctx, tower.typeId, cx, cy, CELL_SIZE * 0.85)) {
+      if (!this.drawSprite(ctx, tower.typeId, center.x, center.y, CELL_SIZE * 0.85)) {
         ctx.fillStyle = isSelected ? '#5fb0ff' : '#8fd0ff';
         ctx.beginPath();
-        ctx.arc(cx, cy, CELL_SIZE / 2 - 6, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, CELL_SIZE / 2 - 6, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = '#0b0d12';
         ctx.font = `${CELL_SIZE * 0.4}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText((type?.name ?? '?').charAt(0).toUpperCase(), cx, cy);
+        ctx.fillText((type?.name ?? '?').charAt(0).toUpperCase(), center.x, center.y);
       }
 
       if (isSelected) {
         ctx.strokeStyle = '#5fb0ff';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(cx, cy, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
 
     for (const monster of this.trialMonsters()) {
-      const cx = monster.position.x * CELL_SIZE + CELL_SIZE / 2;
-      const cy = monster.position.y * CELL_SIZE + CELL_SIZE / 2;
+      const { x: cx, y: cy } = worldToPx(monster.position);
       const maxHp = findMonsterType(monster.typeId)?.hp ?? monster.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, monster.hp / maxHp) : 0;
       const radius = CELL_SIZE * 0.22;
@@ -1205,17 +1726,15 @@ export class GameBoard implements OnInit {
     for (const projectile of this.projectiles) {
       const t = Math.min(1, (now - projectile.firedAtMs) / PROJECTILE_DURATION_MS);
       const alpha = 1 - t;
-      const fromX = projectile.from.x * CELL_SIZE + CELL_SIZE / 2;
-      const fromY = projectile.from.y * CELL_SIZE + CELL_SIZE / 2;
-      const toX = projectile.to.x * CELL_SIZE + CELL_SIZE / 2;
-      const toY = projectile.to.y * CELL_SIZE + CELL_SIZE / 2;
-      const bx = fromX + (toX - fromX) * t;
-      const by = fromY + (toY - fromY) * t;
+      const from = projectile.from;
+      const to = projectile.to;
+      const bx = from.x + (to.x - from.x) * t;
+      const by = from.y + (to.y - from.y) * t;
 
       ctx.strokeStyle = `rgba(255, 224, 140, ${alpha * 0.6})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(fromX, fromY);
+      ctx.moveTo(from.x, from.y);
       ctx.lineTo(bx, by);
       ctx.stroke();
 
@@ -1230,10 +1749,8 @@ export class GameBoard implements OnInit {
       if (t < 0 || t > 1) {
         continue;
       }
-      const cx = splash.position.x * CELL_SIZE + CELL_SIZE / 2;
-      const cy = splash.position.y * CELL_SIZE + CELL_SIZE / 2;
-      const maxRadiusPx = splash.radius * CELL_SIZE;
-      const radiusPx = maxRadiusPx * (0.3 + 0.7 * t);
+      const { x: cx, y: cy } = splash.position;
+      const radiusPx = splash.radiusPx * (0.3 + 0.7 * t);
       const alpha = 1 - t;
 
       ctx.fillStyle = `rgba(255, 140, 60, ${alpha * 0.25})`;
@@ -1249,12 +1766,35 @@ export class GameBoard implements OnInit {
     }
   }
 
+  private hexPath(ctx: CanvasRenderingContext2D, coord: GridCoord): void {
+    const corners = hexCornersPx(coord);
+    ctx.beginPath();
+    corners.forEach((corner, index) => {
+      if (index === 0) {
+        ctx.moveTo(corner.x, corner.y);
+      } else {
+        ctx.lineTo(corner.x, corner.y);
+      }
+    });
+    ctx.closePath();
+  }
+
+  private fillHex(ctx: CanvasRenderingContext2D, coord: GridCoord): void {
+    this.hexPath(ctx, coord);
+    ctx.fill();
+  }
+
+  private strokeHex(ctx: CanvasRenderingContext2D, coord: GridCoord): void {
+    this.hexPath(ctx, coord);
+    ctx.stroke();
+  }
+
   /** Dessine le décor de fond (touffes de végétation, roches…) : purement cosmétique, sous les chemins et le reste. */
   private drawDecor(ctx: CanvasRenderingContext2D, color: string): void {
     ctx.fillStyle = color;
     for (const item of this.decor()) {
-      const cx = item.x * CELL_SIZE;
-      const cy = item.y * CELL_SIZE;
+      const cx = item.x;
+      const cy = item.y;
       const r = CELL_SIZE * 0.16 * item.scale;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -1270,12 +1810,11 @@ export class GameBoard implements OnInit {
     }
     ctx.beginPath();
     points.forEach((point, index) => {
-      const px = point.x * CELL_SIZE + CELL_SIZE / 2;
-      const py = point.y * CELL_SIZE + CELL_SIZE / 2;
+      const center = cellCenterPx(point);
       if (index === 0) {
-        ctx.moveTo(px, py);
+        ctx.moveTo(center.x, center.y);
       } else {
-        ctx.lineTo(px, py);
+        ctx.lineTo(center.x, center.y);
       }
     });
     ctx.stroke();
@@ -1304,16 +1843,11 @@ export class GameBoard implements OnInit {
     range: number,
     color: string,
   ): void {
+    const center = cellCenterPx({ x: cellX, y: cellY });
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(
-      cellX * CELL_SIZE + CELL_SIZE / 2,
-      cellY * CELL_SIZE + CELL_SIZE / 2,
-      range * CELL_SIZE,
-      0,
-      Math.PI * 2,
-    );
+    ctx.arc(center.x, center.y, range * WORLD_SCALE, 0, Math.PI * 2);
     ctx.stroke();
   }
 }

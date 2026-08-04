@@ -13,7 +13,7 @@ export interface TowerInstance {
   typeId: string;
   position: GridCoord;
   level: number;
-  /** Palier auquel la tour a été posée : détermine sa valeur de revente (CONCEPTION.md §4). */
+  /** Palier auquel la tour a été posée. */
   placedAtPalier: number;
 }
 
@@ -105,10 +105,19 @@ export interface Wave {
   lanes: WaveLane[];
 }
 
+/** Descripteur de grille hexagonale (pointy-top, offset odd-r). */
+export interface HexGrid {
+  cols: number;
+  rows: number;
+  cell: 'hex';
+  orientation: 'pointy';
+  offset: 'odd-r';
+}
+
 /** Schéma JSON d'une carte (voir CONCEPTION.md §8). */
 export interface GameMap {
   id: string;
-  grid: { cols: number; rows: number; cell: 'square' };
+  grid: HexGrid;
   chateau: GridCoord;
   spawns: MapSpawn[];
   paths: MapPath[];

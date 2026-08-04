@@ -7,7 +7,7 @@ const p2: MapPath = { id: 'p2', nodes: [[3, 0], [3, 3]] };
 
 const map: GameMap = {
   id: 'test-map',
-  grid: { cols: 6, rows: 6, cell: 'square' },
+  grid: { cols: 6, rows: 6, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
   chateau: { x: 3, y: 3 },
   spawns: [{ id: 's1', x: 0, y: 3 }],
   paths: [p1, p2],
@@ -138,16 +138,16 @@ describe('GameEngine', () => {
     });
   });
 
-  describe('sellTower', () => {
-    it('removes the tower and refunds its full cost (never less than what it cost)', () => {
+  describe('deleteTower', () => {
+    it('removes the tower and recovers its full construction cost', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
       engine.placeTower('archer', { x: 1, y: 1 }); // cost 20
       const towerId = engine.getTowers()[0].id;
 
-      const refund = engine.sellTower(towerId);
+      const recovered = engine.deleteTower(towerId);
 
-      expect(refund).toBe(20);
+      expect(recovered).toBe(20);
       expect(engine.getTowers()).toHaveLength(0);
       expect(engine.getRemainingBudget()).toBe(100); // 100 - 20 + 20
     });
@@ -156,7 +156,7 @@ describe('GameEngine', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
       engine.placeTower('archer', { x: 1, y: 1 });
-      engine.sellTower(engine.getTowers()[0].id);
+      engine.deleteTower(engine.getTowers()[0].id);
 
       expect(engine.placeTower('canon', { x: 1, y: 1 })).toEqual({ ok: true });
     });
@@ -165,7 +165,7 @@ describe('GameEngine', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
 
-      expect(engine.sellTower('missing')).toBeUndefined();
+      expect(engine.deleteTower('missing')).toBeUndefined();
     });
 
     it('returns undefined outside the defense phase', () => {
@@ -175,11 +175,11 @@ describe('GameEngine', () => {
       const towerId = engine.getTowers()[0].id;
       engine.resolveDefenseSuccess();
 
-      expect(engine.sellTower(towerId)).toBeUndefined();
+      expect(engine.deleteTower(towerId)).toBeUndefined();
       expect(engine.getTowers()).toHaveLength(1);
     });
 
-    it('refunds only half the cost for a tower inherited from a previous palier', () => {
+    it('recovers the full cost even for a tower inherited from a previous palier', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
       engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 1
@@ -188,7 +188,8 @@ describe('GameEngine', () => {
       engine.resolveDefenseSuccess();
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, back to defense
 
-      expect(engine.sellTower(towerId)).toBe(10); // floor(20 * 0.5)
+      expect(engine.deleteTower(towerId)).toBe(20);
+      expect(engine.getRemainingBudget()).toBe(engine.getDefenseBudget());
     });
   });
 
@@ -218,7 +219,7 @@ describe('GameEngine', () => {
       expect(engine.getRemainingBudget()).toBe(before);
     });
 
-    it('permanently forfeits part of the value of a tower inherited from a previous palier', () => {
+    it('is free even for a tower inherited from a previous palier', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
       engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 1
@@ -231,47 +232,7 @@ describe('GameEngine', () => {
       const result = engine.moveTower(towerId, { x: 2, y: 2 });
 
       expect(result).toEqual({ ok: true });
-      expect(engine.getRemainingBudget()).toBe(before - 10); // 20 - floor(20 * 0.5)
-    });
-
-    it('rejects a move that would push the remaining budget below zero', () => {
-      const engine = new GameEngine();
-      engine.startRun(
-        map,
-        makeStartingData({ startingDefenseBudget: 20, budgetGrowth: { defense: 0, attack: 0 } }),
-      );
-      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, remaining budget -> 0
-      const towerId = engine.getTowers()[0].id;
-
-      engine.resolveDefenseSuccess();
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, no budget growth
-
-      expect(engine.getRemainingBudget()).toBe(0);
-
-      const result = engine.moveTower(towerId, { x: 2, y: 2 });
-
-      expect(result).toEqual({ ok: false, reason: 'insufficient-budget' });
-      expect(engine.getRemainingBudget()).toBe(0); // unchanged, never dips below zero
-      expect(engine.getTowers()[0].position).toEqual({ x: 1, y: 1 }); // tower not moved
-    });
-
-    it('allows a move whose forfeited value exactly matches the remaining budget', () => {
-      const engine = new GameEngine();
-      engine.startRun(
-        map,
-        makeStartingData({ startingDefenseBudget: 30, budgetGrowth: { defense: 0, attack: 0 } }),
-      );
-      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, remaining budget -> 10
-      const towerId = engine.getTowers()[0].id;
-
-      engine.resolveDefenseSuccess();
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, no budget growth
-
-      // Forfeit on move = 20 - floor(20 * 0.5) = 10, exactly the remaining budget.
-      const result = engine.moveTower(towerId, { x: 2, y: 2 });
-
-      expect(result).toEqual({ ok: true });
-      expect(engine.getRemainingBudget()).toBe(0);
+      expect(engine.getRemainingBudget()).toBe(before);
     });
 
     it('rejects a move onto a cell already occupied by another tower', () => {
@@ -426,120 +387,6 @@ describe('GameEngine', () => {
       const composedWave = wave(lane([{ type: 'goblin' }, { type: 'orc' }]));
 
       expect(engine.getAttackBudgetRemaining(composedWave)).toBe(80 - 5 - 12);
-    });
-  });
-
-  describe('getAttackAttempt', () => {
-    it('starts at 1 when entering a fresh attack phase', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-
-      expect(engine.getAttackAttempt()).toBe(1);
-    });
-
-    it('increments each time an attack attempt fails', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-
-      engine.recordFailedAttackAttempt();
-      engine.recordFailedAttackAttempt();
-
-      expect(engine.getAttackAttempt()).toBe(3);
-    });
-
-    it('is a no-op outside the attack phase', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-
-      engine.recordFailedAttackAttempt();
-
-      expect(engine.getAttackAttempt()).toBe(1);
-    });
-
-    it('resets to 1 when a new attack phase begins on the next cycle', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-      engine.recordFailedAttackAttempt(); // attempt -> 2
-
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
-      engine.resolveDefenseSuccess(); // next cycle's fresh attack phase
-
-      expect(engine.getAttackAttempt()).toBe(1);
-    });
-  });
-
-  describe('recordAttackUnitRemoval', () => {
-    it('is free when the unit was added during the current attack attempt', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-
-      engine.recordAttackUnitRemoval('goblin', engine.getAttackAttempt());
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(80);
-    });
-
-    it('permanently forfeits part of the cost of a unit established in an earlier attempt', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-      const firstAttempt = engine.getAttackAttempt();
-      engine.recordFailedAttackAttempt(); // attempt moves on; firstAttempt is now "established"
-
-      engine.recordAttackUnitRemoval('goblin', firstAttempt); // cost 5, refund floor(5*0.5) = 2
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(80 - 3);
-    });
-
-    it('accumulates across several removals from earlier attempts', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-      const firstAttempt = engine.getAttackAttempt();
-      engine.recordFailedAttackAttempt();
-
-      engine.recordAttackUnitRemoval('goblin', firstAttempt); // forfeits 3
-      engine.recordAttackUnitRemoval('orc', firstAttempt); // cost 12, refund 6, forfeits 6
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(80 - 3 - 6);
-    });
-
-    it('is a no-op outside the attack phase', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-
-      engine.recordAttackUnitRemoval('goblin', 1);
-      engine.resolveDefenseSuccess();
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(80);
-    });
-
-    it('ignores an unknown monster type', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-      engine.recordFailedAttackAttempt();
-
-      engine.recordAttackUnitRemoval('ghost', 1);
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(80);
-    });
-
-    it('resets when a new attack phase begins on the next cycle', () => {
-      const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.resolveDefenseSuccess();
-      const firstAttempt = engine.getAttackAttempt();
-      engine.recordFailedAttackAttempt();
-      engine.recordAttackUnitRemoval('goblin', firstAttempt); // forfeits 3
-
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
-      engine.resolveDefenseSuccess(); // next cycle's attack phase; budget grown by 30 -> 110
-
-      expect(engine.getAttackBudgetRemaining(wave(lane([])))).toBe(110);
     });
   });
 

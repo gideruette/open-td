@@ -1,24 +1,41 @@
 {
   "id": "forest-01",
-  "grid": { "cols": 32, "rows": 24, "cell": "square" },
-  "chateau": { "x": 16, "y": 12 },
-  "spawns": [{ "id": "s1", "x": 0, "y": 12 }],
+  "grid": {
+    "cols": 32,
+    "rows": 24,
+    "cell": "hex",
+    "orientation": "pointy",
+    "offset": "odd-r"
+  },
+  "chateau": {
+    "x": 16,
+    "y": 12
+  },
+  "spawns": [
+    {
+      "id": "s1",
+      "x": 16,
+      "y": 23
+    }
+  ],
   "paths": [
     {
-      "id": "north",
+      "id": "west",
       "nodes": [
-        [0, 12],
-        [0, 6],
-        [16, 6],
+        [16, 23],
+        [2, 23],
+        [2, 2],
+        [16, 2],
         [16, 12]
       ]
     },
     {
-      "id": "south",
+      "id": "east",
       "nodes": [
-        [0, 12],
-        [0, 18],
-        [16, 18],
+        [16, 23],
+        [29, 23],
+        [29, 2],
+        [16, 2],
         [16, 12]
       ]
     }

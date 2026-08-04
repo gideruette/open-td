@@ -13,16 +13,16 @@ import {
 
 const map: GameMap = {
   id: 'test-map',
-  grid: { cols: 6, rows: 6, cell: 'square' },
+  grid: { cols: 6, rows: 6, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
   chateau: { x: 3, y: 3 },
   spawns: [{ id: 's1', x: 0, y: 3 }],
   paths: [{ id: 'p1', nodes: [[0, 3], [3, 3]] }],
 };
 
-const archer: TowerType = { id: 'archer', name: 'Archer', cost: 20, range: 3, damage: 8, cooldown: 5 };
+const archer: TowerType = { id: 'archer', name: 'Archer', description: '', cost: 20, range: 3, damage: 8, cooldown: 5 };
 const catalog: TowerType[] = [
   archer,
-  { id: 'canon', name: 'Canon', cost: 35, range: 2, damage: 15, cooldown: 15 },
+  { id: 'canon', name: 'Canon', description: '', cost: 35, range: 2, damage: 15, cooldown: 15 },
 ];
 
 describe('isWithinGrid', () => {

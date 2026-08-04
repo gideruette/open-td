@@ -1,24 +1,41 @@
 {
   "id": "toundra-05",
-  "grid": { "cols": 48, "rows": 16, "cell": "square" },
-  "chateau": { "x": 24, "y": 8 },
-  "spawns": [{ "id": "s1", "x": 0, "y": 8 }],
+  "grid": {
+    "cols": 48,
+    "rows": 16,
+    "cell": "hex",
+    "orientation": "pointy",
+    "offset": "odd-r"
+  },
+  "chateau": {
+    "x": 24,
+    "y": 8
+  },
+  "spawns": [
+    {
+      "id": "s1",
+      "x": 24,
+      "y": 15
+    }
+  ],
   "paths": [
     {
-      "id": "haut",
+      "id": "ouest",
       "nodes": [
-        [0, 8],
-        [0, 2],
-        [24, 2],
+        [24, 15],
+        [2, 15],
+        [2, 1],
+        [24, 1],
         [24, 8]
       ]
     },
     {
-      "id": "bas",
+      "id": "est",
       "nodes": [
-        [0, 8],
-        [0, 14],
-        [24, 14],
+        [24, 15],
+        [45, 15],
+        [45, 1],
+        [24, 1],
         [24, 8]
       ]
     }

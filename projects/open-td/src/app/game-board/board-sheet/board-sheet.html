@@ -1,0 +1,16 @@
+<aside
+  class="board-sheet"
+  [class.board-sheet--open]="open()"
+  [attr.id]="sheetId()"
+  [attr.aria-hidden]="!open()"
+  [attr.inert]="open() ? null : ''"
+  [attr.aria-label]="ariaLabel()"
+>
+  <div class="board-sheet__chrome">
+    <span class="board-sheet__title">{{ title() }}</span>
+    <button type="button" class="board-sheet__close" (click)="closed.emit()" aria-label="Fermer">×</button>
+  </div>
+  <div class="board-sheet__body">
+    <ng-content />
+  </div>
+</aside>

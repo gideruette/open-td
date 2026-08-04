@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { GameMap, MapPath, TowerInstance } from 'shared';
+import { hexToWorld } from 'shared';
 import {
   addMapPath,
   cellsBetween,
+  expandPathCells,
   isAdjacentCell,
   isSpawnCell,
   isValidPathStep,
@@ -29,9 +31,18 @@ const bentPath: MapPath = {
 };
 
 describe('pathLength', () => {
-  it('sums the euclidean length of each segment', () => {
-    expect(pathLength(straightPath)).toBe(4);
-    expect(pathLength(bentPath)).toBe(7);
+  it('sums neighbor-to-neighbor world lengths along the expanded hex path', () => {
+    // Horizontal odd-r run of 4 steps: each step distance 1.
+    expect(pathLength(straightPath)).toBeCloseTo(4, 10);
+    // [0,0]→[3,0] = 3 hex steps ; [3,0]→[3,4] = hexDistance steps of length 1.
+    const verticalSteps = expandPathCells({
+      id: 'vert',
+      nodes: [
+        [3, 0],
+        [3, 4],
+      ],
+    }).length - 1;
+    expect(pathLength(bentPath)).toBeCloseTo(3 + verticalSteps, 10);
   });
 
   it('is zero for a single-node path', () => {
@@ -40,27 +51,55 @@ describe('pathLength', () => {
 });
 
 describe('pointAtDistance', () => {
-  it('returns the start node for distance 0 or less', () => {
-    expect(pointAtDistance(straightPath, 0)).toEqual({ x: 0, y: 0 });
-    expect(pointAtDistance(straightPath, -5)).toEqual({ x: 0, y: 0 });
+  it('returns the start node world center for distance 0 or less', () => {
+    expect(pointAtDistance(straightPath, 0)).toEqual(hexToWorld({ x: 0, y: 0 }));
+    expect(pointAtDistance(straightPath, -5)).toEqual(hexToWorld({ x: 0, y: 0 }));
   });
 
-  it('interpolates within a segment', () => {
-    expect(pointAtDistance(straightPath, 2)).toEqual({ x: 2, y: 0 });
+  it('interpolates within a segment in world space', () => {
+    const mid = hexToWorld({ x: 2, y: 0 });
+    const point = pointAtDistance(straightPath, 2);
+    expect(point.x).toBeCloseTo(mid.x, 10);
+    expect(point.y).toBeCloseTo(mid.y, 10);
   });
 
-  it('crosses into the next segment', () => {
-    expect(pointAtDistance(bentPath, 5)).toEqual({ x: 3, y: 2 });
+  it('follows hex cell centers when turning a corner', () => {
+    // After the 3 horizontal steps, the next cell on [3,0]→[3,4] is the first hexLinedraw step.
+    const vertical = expandPathCells({
+      id: 'vert',
+      nodes: [
+        [3, 0],
+        [3, 4],
+      ],
+    });
+    const firstAfterCorner = vertical[1];
+    const expected = hexToWorld(firstAfterCorner);
+    const point = pointAtDistance(bentPath, 3 + 1);
+    expect(point.x).toBeCloseTo(expected.x, 10);
+    expect(point.y).toBeCloseTo(expected.y, 10);
   });
 
   it('clamps to the last node beyond the path length', () => {
-    expect(pointAtDistance(bentPath, 999)).toEqual({ x: 3, y: 4 });
+    expect(pointAtDistance(bentPath, 999)).toEqual(hexToWorld({ x: 3, y: 4 }));
   });
 });
 
+describe('expandPathCells', () => {
+  it('includes every hex along the route between waypoints', () => {
+    const cells = expandPathCells(straightPath);
+    expect(cells[0]).toEqual({ x: 0, y: 0 });
+    expect(cells.at(-1)).toEqual({ x: 4, y: 0 });
+    for (let i = 1; i < cells.length; i++) {
+      expect(isAdjacentCell(cells[i - 1], cells[i])).toBe(true);
+    }
+  });
+});
+
+const HEX_GRID = { cols: 5, rows: 5, cell: 'hex' as const, orientation: 'pointy' as const, offset: 'odd-r' as const };
+
 const tracingMap: GameMap = {
   id: 'tracing-map',
-  grid: { cols: 5, rows: 5, cell: 'square' },
+  grid: HEX_GRID,
   chateau: { x: 4, y: 4 },
   spawns: [{ id: 's1', x: 0, y: 0 }],
   paths: [],
@@ -113,7 +152,6 @@ describe('cellsBetween', () => {
 
   it('returns the single next cell when already adjacent', () => {
     expect(cellsBetween({ x: 1, y: 1 }, { x: 2, y: 1 })).toEqual([{ x: 2, y: 1 }]);
-    expect(cellsBetween({ x: 1, y: 1 }, { x: 2, y: 2 })).toEqual([{ x: 2, y: 2 }]);
   });
 
   it('fills every intermediate cell along a straight horizontal line', () => {
@@ -124,15 +162,7 @@ describe('cellsBetween', () => {
     ]);
   });
 
-  it('fills every intermediate cell along a diagonal line', () => {
-    expect(cellsBetween({ x: 0, y: 0 }, { x: 3, y: 3 })).toEqual([
-      { x: 1, y: 1 },
-      { x: 2, y: 2 },
-      { x: 3, y: 3 },
-    ]);
-  });
-
-  it('each generated step stays adjacent (Chebyshev distance 1) to the previous one', () => {
+  it('each generated step stays at hex distance 1 from the previous one', () => {
     const steps = cellsBetween({ x: 0, y: 0 }, { x: 5, y: 2 });
     let previous = { x: 0, y: 0 };
     for (const step of steps) {
@@ -154,13 +184,14 @@ describe('isSpawnCell', () => {
 });
 
 describe('isAdjacentCell', () => {
-  it('accepts orthogonal neighbors', () => {
-    expect(isAdjacentCell({ x: 1, y: 1 }, { x: 1, y: 2 })).toBe(true);
+  it('accepts hex neighbors', () => {
     expect(isAdjacentCell({ x: 1, y: 1 }, { x: 2, y: 1 })).toBe(true);
+    expect(isAdjacentCell({ x: 1, y: 1 }, { x: 1, y: 2 })).toBe(true);
+    expect(isAdjacentCell({ x: 1, y: 1 }, { x: 2, y: 2 })).toBe(true);
   });
 
-  it('accepts diagonal neighbors', () => {
-    expect(isAdjacentCell({ x: 1, y: 1 }, { x: 2, y: 2 })).toBe(true);
+  it('rejects cells at hex distance greater than 1', () => {
+    expect(isAdjacentCell({ x: 1, y: 1 }, { x: 0, y: 0 })).toBe(false);
   });
 
   it('rejects the same cell', () => {
@@ -174,7 +205,7 @@ describe('isAdjacentCell', () => {
 
 describe('isValidPathStep', () => {
   it('accepts a step to an adjacent, in-bounds, tower-free cell', () => {
-    expect(isValidPathStep(tracingMap, [], { x: 0, y: 0 }, { x: 1, y: 1 })).toBe(true);
+    expect(isValidPathStep(tracingMap, [], { x: 0, y: 0 }, { x: 1, y: 0 })).toBe(true);
   });
 
   it('rejects a step outside the grid', () => {
@@ -186,7 +217,7 @@ describe('isValidPathStep', () => {
   });
 
   it('rejects a step onto a cell occupied by a tower', () => {
-    const towers = [tower(1, 1)];
-    expect(isValidPathStep(tracingMap, towers, { x: 0, y: 0 }, { x: 1, y: 1 })).toBe(false);
+    const towers = [tower(1, 0)];
+    expect(isValidPathStep(tracingMap, towers, { x: 0, y: 0 }, { x: 1, y: 0 })).toBe(false);
   });
 });

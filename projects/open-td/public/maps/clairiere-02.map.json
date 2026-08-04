@@ -1,24 +1,41 @@
 {
   "id": "clairiere-02",
-  "grid": { "cols": 16, "rows": 12, "cell": "square" },
-  "chateau": { "x": 8, "y": 6 },
-  "spawns": [{ "id": "s1", "x": 0, "y": 6 }],
+  "grid": {
+    "cols": 16,
+    "rows": 12,
+    "cell": "hex",
+    "orientation": "pointy",
+    "offset": "odd-r"
+  },
+  "chateau": {
+    "x": 8,
+    "y": 6
+  },
+  "spawns": [
+    {
+      "id": "s1",
+      "x": 8,
+      "y": 11
+    }
+  ],
   "paths": [
     {
-      "id": "nord",
+      "id": "ouest",
       "nodes": [
-        [0, 6],
-        [0, 2],
-        [8, 2],
+        [8, 11],
+        [1, 11],
+        [1, 1],
+        [8, 1],
         [8, 6]
       ]
     },
     {
-      "id": "sud",
+      "id": "est",
       "nodes": [
-        [0, 6],
-        [0, 10],
-        [8, 10],
+        [8, 11],
+        [14, 11],
+        [14, 1],
+        [8, 1],
         [8, 6]
       ]
     }

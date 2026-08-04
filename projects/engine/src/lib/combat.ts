@@ -1,5 +1,5 @@
 import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
-import { MONSTER_TYPES, TOWER_TYPES } from 'shared';
+import { MONSTER_TYPES, TOWER_TYPES, hexToWorld } from 'shared';
 import { pathLength, pointAtDistance } from './path';
 
 /** Candidat de ciblage : vue minimale d'un monstre utile au choix de la cible d'une tour. */
@@ -7,10 +7,14 @@ export interface TargetCandidate {
   id: string;
   /** Distance parcourue le long du chemin (plus grand = plus avancé). */
   distance: number;
+  /** Position en world-space (centres hex, voisin ≈ 1). */
   position: GridCoord;
 }
 
-/** Choisit la cible d'une tour parmi les monstres à portée : toujours le plus avancé. Pure. */
+/**
+ * Choisit la cible d'une tour parmi les monstres à portée : toujours le plus avancé.
+ * `towerPosition` et les positions candidats sont en world-space.
+ */
 export function selectTarget(
   towerPosition: GridCoord,
   towerRange: number,
@@ -56,7 +60,10 @@ export function waveCost(wave: Wave, monsterCatalog: readonly MonsterType[] = MO
   );
 }
 
-/** Tir d'une tour survenu pendant le dernier tick (position de la tour → position touchée). */
+/**
+ * Tir d'une tour survenu pendant le dernier tick.
+ * `towerPosition` : case odd-r de la tour ; `targetPosition` : world-space du monstre touché.
+ */
 export interface ShotEvent {
   towerPosition: GridCoord;
   targetPosition: GridCoord;
@@ -270,7 +277,7 @@ export class DefenseSimulation {
       distance: monster.distance,
       position: this.getMonsterPosition(monster),
     }));
-    const targetId = selectTarget(tower.position, towerType.range, candidates);
+    const targetId = selectTarget(hexToWorld(tower.position), towerType.range, candidates);
     return this.monsters.find((monster) => monster.id === targetId);
   }
 

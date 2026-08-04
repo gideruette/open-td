@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
+import { hexToWorld } from 'shared';
 import { DefenseSimulation, selectTarget, totalChateauDamage, waveCost } from './combat';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
@@ -13,16 +14,17 @@ function wave(...lanes: WaveLane[]): Wave {
   return { lanes };
 }
 
-const unit: MonsterType = { id: 'unit', name: 'Unit', cost: 1, hp: 1000, speed: 1, armored: false, chateauDamage: 1 };
-const goblin: MonsterType = { id: 'goblin', name: 'Gobelin', cost: 5, hp: 20, speed: 1, armored: false, chateauDamage: 1 };
-const golem: MonsterType = { id: 'golem', name: 'Golem', cost: 30, hp: 40, speed: 1, armored: true, chateauDamage: 4 };
+const unit: MonsterType = { id: 'unit', name: 'Unit', description: '', cost: 1, hp: 1000, speed: 1, armored: false, chateauDamage: 1 };
+const goblin: MonsterType = { id: 'goblin', name: 'Gobelin', description: '', cost: 5, hp: 20, speed: 1, armored: false, chateauDamage: 1 };
+const golem: MonsterType = { id: 'golem', name: 'Golem', description: '', cost: 30, hp: 40, speed: 1, armored: true, chateauDamage: 4 };
 const monsterCatalog: MonsterType[] = [unit, goblin, golem];
 
-const weakTower: TowerType = { id: 'weak', name: 'Weak', cost: 1, range: 100, damage: 1, cooldown: 1000 };
-const strongTower: TowerType = { id: 'strong', name: 'Strong', cost: 1, range: 100, damage: 1000, cooldown: 1 };
+const weakTower: TowerType = { id: 'weak', name: 'Weak', description: '', cost: 1, range: 100, damage: 1, cooldown: 1000 };
+const strongTower: TowerType = { id: 'strong', name: 'Strong', description: '', cost: 1, range: 100, damage: 1000, cooldown: 1 };
 const splashTower: TowerType = {
   id: 'splash',
   name: 'Splash',
+  description: '',
   cost: 1,
   range: 2,
   damage: 15,
@@ -32,6 +34,7 @@ const splashTower: TowerType = {
 const slowTower: TowerType = {
   id: 'slow',
   name: 'Slow',
+  description: '',
   cost: 1,
   range: 100,
   damage: 0,
@@ -42,6 +45,7 @@ const slowTower: TowerType = {
 const armorTower: TowerType = {
   id: 'armor',
   name: 'Armor',
+  description: '',
   cost: 1,
   range: 100,
   damage: 10,
@@ -238,9 +242,11 @@ describe('DefenseSimulation', () => {
       const monsters = sim.getMonsters();
       expect(monsters).toHaveLength(2);
       const positions = monsters.map((monster) => sim.getMonsterPosition(monster));
-      // lane 0 follows p1 (y=0), lane 1 follows p2 (y=3)
-      expect(positions).toContainEqual({ x: expect.any(Number), y: 0 });
-      expect(positions).toContainEqual({ x: expect.any(Number), y: 3 });
+      // lane 0 follows p1 (row 0), lane 1 follows p2 (row 3) — positions are world-space.
+      const lane0Y = hexToWorld({ x: 0, y: 0 }).y;
+      const lane1Y = hexToWorld({ x: 0, y: 3 }).y;
+      expect(positions.some((pos) => Math.abs(pos.y - lane0Y) < 1e-9)).toBe(true);
+      expect(positions.some((pos) => Math.abs(pos.y - lane1Y) < 1e-9)).toBe(true);
     });
 
     it('does not resolve success until every lane has finished spawning (defense mode)', () => {
@@ -275,7 +281,10 @@ describe('DefenseSimulation', () => {
       }
 
       const remaining = sim.getMonsters();
-      expect(remaining.some((monster) => sim.getMonsterPosition(monster).y === 3)).toBe(true);
+      const lane1Y = hexToWorld({ x: 0, y: 3 }).y;
+      expect(remaining.some((monster) => Math.abs(sim.getMonsterPosition(monster).y - lane1Y) < 1e-9)).toBe(
+        true,
+      );
     });
 
     it('breaches independently attribute chateau damage regardless of lane', () => {
@@ -326,11 +335,20 @@ describe('totalChateauDamage', () => {
   it('the shipped forest-01 wave #0 can destroy an undefended chateau (CONCEPTION.md §4, §6)', () => {
     // Mirrors projects/open-td/public/maps/forest-01.start.json — if that data changes,
     // this must be kept in sync so a fully undefended chateau stays destructible.
-    const southPath: MapPath = { id: 'south', nodes: [[0, 12], [0, 18], [16, 18], [16, 12]] };
+    const westPath: MapPath = {
+      id: 'west',
+      nodes: [
+        [16, 23],
+        [2, 23],
+        [2, 2],
+        [16, 2],
+        [16, 12],
+      ],
+    };
     const wave0 = wave(
       lane(
         [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }, { type: 'goblin' }],
-        southPath,
+        westPath,
       ),
     );
     const shippedChateauHp = 5;

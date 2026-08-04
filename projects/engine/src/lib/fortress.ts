@@ -48,8 +48,8 @@ export function spentBudget(
 
 /**
  * Règles géométriques d'occupation d'une case (grille, château, bord, occupation par une autre
- * tour), sans le budget : réutilisable pour un déplacement, qui ne paie pas le coût plein
- * (CONCEPTION.md §4). Ne mute rien.
+ * tour), sans le budget : réutilisable pour un déplacement, toujours gratuit (CONCEPTION.md §4).
+ * Ne mute rien.
  */
 export function canOccupyCell(
   map: GameMap | undefined,

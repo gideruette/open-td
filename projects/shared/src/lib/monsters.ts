@@ -40,15 +40,3 @@ export const MONSTER_TYPES: readonly MonsterType[] = [
 export function findMonsterType(typeId: string): MonsterType | undefined {
   return MONSTER_TYPES.find((type) => type.id === typeId);
 }
-
-/** Part du coût récupérée en retirant un monstre déjà mis en file d'une voie (CONCEPTION.md §5.2). */
-const UNIT_REMOVAL_REFUND_RATIO = 0.5;
-
-/**
- * Retirer un monstre déjà mis en file d'une voie ne rend qu'une fraction de son coût :
- * modifier une composition d'attaque une fois une voie établie n'est pas gratuit
- * (CONCEPTION.md §5.2).
- */
-export function unitRemovalRefund(cost: number): number {
-  return Math.floor(cost * UNIT_REMOVAL_REFUND_RATIO);
-}

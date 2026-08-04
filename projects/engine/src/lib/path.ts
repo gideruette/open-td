@@ -1,43 +1,66 @@
 import type { GameMap, GridCoord, MapPath, TowerInstance } from 'shared';
+import { hexDistance, hexLinedraw, hexToWorld } from 'shared';
 import { isWithinGrid } from './fortress';
 
-function segmentLength(a: readonly [number, number], b: readonly [number, number]): number {
-  return Math.hypot(b[0] - a[0], b[1] - a[1]);
+function segmentLength(a: GridCoord, b: GridCoord): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
-/** Longueur totale d'un chemin (somme des segments), en cases de grille. */
-export function pathLength(path: MapPath): number {
-  let total = 0;
+/**
+ * Développe les waypoints d'un chemin en la liste ordonnée de cases hex traversées
+ * (centres successifs, voisins à distance 1). C'est la polyligne suivie à l'écran et
+ * par les monstres — pas la corde droite entre deux coins.
+ */
+export function expandPathCells(path: MapPath): GridCoord[] {
+  if (path.nodes.length === 0) {
+    return [];
+  }
+  const cells: GridCoord[] = [{ x: path.nodes[0][0], y: path.nodes[0][1] }];
   for (let i = 1; i < path.nodes.length; i++) {
-    total += segmentLength(path.nodes[i - 1], path.nodes[i]);
+    const from = cells[cells.length - 1];
+    const to = { x: path.nodes[i][0], y: path.nodes[i][1] };
+    cells.push(...hexLinedraw(from, to));
+  }
+  return cells;
+}
+
+function cellWorldCenters(path: MapPath): GridCoord[] {
+  return expandPathCells(path).map((cell) => hexToWorld(cell));
+}
+
+/** Longueur totale d'un chemin (somme des segments entre centres hex voisins). */
+export function pathLength(path: MapPath): number {
+  const centers = cellWorldCenters(path);
+  let total = 0;
+  for (let i = 1; i < centers.length; i++) {
+    total += segmentLength(centers[i - 1], centers[i]);
   }
   return total;
 }
 
-/** Position interpolée le long du chemin à la distance parcourue donnée (clampée aux extrémités). */
+/** Position interpolée le long du chemin à la distance parcourue donnée (clampée aux extrémités), en world-space. */
 export function pointAtDistance(path: MapPath, distance: number): GridCoord {
-  if (path.nodes.length === 0) {
+  const centers = cellWorldCenters(path);
+  if (centers.length === 0) {
     return { x: 0, y: 0 };
   }
   if (distance <= 0) {
-    const [x, y] = path.nodes[0];
-    return { x, y };
+    return centers[0];
   }
 
   let remaining = distance;
-  for (let i = 1; i < path.nodes.length; i++) {
-    const [ax, ay] = path.nodes[i - 1];
-    const [bx, by] = path.nodes[i];
-    const segLen = segmentLength(path.nodes[i - 1], path.nodes[i]);
+  for (let i = 1; i < centers.length; i++) {
+    const from = centers[i - 1];
+    const to = centers[i];
+    const segLen = segmentLength(from, to);
     if (remaining <= segLen) {
       const t = segLen === 0 ? 0 : remaining / segLen;
-      return { x: ax + (bx - ax) * t, y: ay + (by - ay) * t };
+      return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
     }
     remaining -= segLen;
   }
 
-  const [x, y] = path.nodes[path.nodes.length - 1];
-  return { x, y };
+  return centers[centers.length - 1];
 }
 
 export function isSpawnCell(map: GameMap, coord: GridCoord): boolean {
@@ -63,28 +86,18 @@ export function addMapPath(map: GameMap, path: MapPath): GameMap {
   return { ...map, paths: [...map.paths, path] };
 }
 
-/** Deux cases sont adjacentes (diagonales incluses) si leur distance de Chebyshev vaut 1. */
+/** Deux cases sont adjacentes si leur distance hex vaut 1 (6 voisins). */
 export function isAdjacentCell(a: GridCoord, b: GridCoord): boolean {
-  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) === 1;
+  return hexDistance(a, b) === 1;
 }
 
 /**
- * Cases intermédiaires entre `from` (exclue) et `to` (incluse), par pas d'une case
- * (diagonales incluses) : permet de cliquer directement une case distante lors d'un tracé
- * libre, les cases traversées étant comblées automatiquement (CONCEPTION.md §5.3).
+ * Cases intermédiaires entre `from` (exclue) et `to` (incluse), par pas d'une case hex :
+ * permet de cliquer directement une case distante lors d'un tracé libre, les cases
+ * traversées étant comblées automatiquement (CONCEPTION.md §5.3).
  */
 export function cellsBetween(from: GridCoord, to: GridCoord): GridCoord[] {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const steps = Math.max(Math.abs(dx), Math.abs(dy));
-  const cells: GridCoord[] = [];
-  for (let i = 1; i <= steps; i++) {
-    cells.push({
-      x: from.x + Math.round((dx * i) / steps),
-      y: from.y + Math.round((dy * i) / steps),
-    });
-  }
-  return cells;
+  return hexLinedraw(from, to);
 }
 
 /**
