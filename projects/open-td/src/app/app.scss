@@ -1,0 +1,43 @@
+:host {
+  display: block;
+  min-height: 100dvh;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #e8e6e1;
+  background: #12141a;
+}
+
+.shell {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  max-width: 90rem;
+  margin: 0 auto;
+}
+
+.shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.shell__header h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  letter-spacing: 0.04em;
+}
+
+.shell__change-map {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #2a2f3a;
+  border-radius: 0.35rem;
+  background: #171a22;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #5fb0ff;
+    background: #1d2a3a;
+  }
+}

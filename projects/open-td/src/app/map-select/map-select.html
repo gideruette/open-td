@@ -1,0 +1,32 @@
+<section class="map-select">
+  <header class="map-select__header">
+    <h1>Open TD</h1>
+    <p>Choisissez votre carte de départ.</p>
+  </header>
+
+  <div class="map-select__grid">
+    @for (entry of maps; track entry.id) {
+      <button type="button" class="map-card" (click)="choose(entry)">
+        <span class="map-card__preview">
+          <span
+            class="map-card__rect"
+            [style.width]="previewSize(entry).width"
+            [style.height]="previewSize(entry).height"
+            [style.background]="previewColors(entry).background"
+            [style.border-color]="previewColors(entry).border"
+          ></span>
+        </span>
+        <span class="map-card__name">{{ entry.name }}</span>
+        <span class="map-card__meta">
+          <span class="map-card__dimensions">{{ entry.grid.cols }} × {{ entry.grid.rows }}</span>
+          <span class="map-card__difficulty" [attr.data-difficulty]="entry.difficulty">{{ entry.difficulty }}</span>
+        </span>
+        <span class="map-card__description">{{ entry.description }}</span>
+        <span class="map-card__budget">
+          Budget départ : {{ entry.startingData.startingDefenseBudget }} défense /
+          {{ entry.startingData.startingAttackBudget }} attaque
+        </span>
+      </button>
+    }
+  </div>
+</section>

@@ -1,0 +1,11 @@
+{
+  "name": "engine",
+  "version": "0.0.1",
+  "peerDependencies": {
+    "shared": "0.0.1"
+  },
+  "dependencies": {
+    "tslib": "^2.3.0"
+  },
+  "sideEffects": false
+}
