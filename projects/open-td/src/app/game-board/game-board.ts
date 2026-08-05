@@ -1734,19 +1734,28 @@ export class GameBoard implements OnInit {
     this.strokePolyline(ctx, points);
   }
 
+  /**
+   * Trace une ligne lissée passant par le centre de chaque case : aux points intermédiaires, la
+   * ligne rejoint le milieu du segment suivant via une courbe (au lieu d'un coin à angle vif).
+   */
   private strokePolyline(ctx: CanvasRenderingContext2D, points: readonly GridCoord[]): void {
     if (points.length === 0) {
       return;
     }
+    const centers = points.map(cellCenterPx);
     ctx.beginPath();
-    points.forEach((point, index) => {
-      const center = cellCenterPx(point);
-      if (index === 0) {
-        ctx.moveTo(center.x, center.y);
-      } else {
-        ctx.lineTo(center.x, center.y);
-      }
-    });
+    ctx.moveTo(centers[0].x, centers[0].y);
+    for (let i = 1; i < centers.length - 1; i++) {
+      const current = centers[i];
+      const next = centers[i + 1];
+      const midX = (current.x + next.x) / 2;
+      const midY = (current.y + next.y) / 2;
+      ctx.quadraticCurveTo(current.x, current.y, midX, midY);
+    }
+    if (centers.length > 1) {
+      const last = centers[centers.length - 1];
+      ctx.lineTo(last.x, last.y);
+    }
     ctx.stroke();
   }
 
