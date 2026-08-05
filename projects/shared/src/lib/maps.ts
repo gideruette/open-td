@@ -50,9 +50,9 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     grid: { cols: 16, rows: 12, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'clairiere-02',
-      startingDefenseBudget: 70,
-      startingAttackBudget: 50,
-      budgetGrowth: { defense: 30, attack: 20 },
+      startingDefenseBudget: 140,
+      startingAttackBudget: 100,
+      budgetGrowth: { defense: 60, attack: 40 },
       chateauHp: 5,
       initialWave: {
         lanes: [
@@ -95,9 +95,9 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     grid: { cols: 32, rows: 24, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'forest-01',
-      startingDefenseBudget: 100,
-      startingAttackBudget: 80,
-      budgetGrowth: { defense: 40, attack: 30 },
+      startingDefenseBudget: 120,
+      startingAttackBudget: 100,
+      budgetGrowth: { defense: 80, attack: 60 },
       chateauHp: 5,
       initialWave: {
         lanes: [
@@ -134,9 +134,9 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     grid: { cols: 24, rows: 18, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'marais-03',
-      startingDefenseBudget: 130,
-      startingAttackBudget: 100,
-      budgetGrowth: { defense: 45, attack: 35 },
+      startingDefenseBudget: 260,
+      startingAttackBudget: 200,
+      budgetGrowth: { defense: 90, attack: 70 },
       chateauHp: 6,
       initialWave: {
         lanes: [
@@ -177,9 +177,9 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     grid: { cols: 48, rows: 16, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'toundra-05',
-      startingDefenseBudget: 140,
-      startingAttackBudget: 110,
-      budgetGrowth: { defense: 48, attack: 38 },
+      startingDefenseBudget: 280,
+      startingAttackBudget: 220,
+      budgetGrowth: { defense: 100, attack: 80 },
       chateauHp: 6,
       initialWave: {
         lanes: [
@@ -222,9 +222,9 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     grid: { cols: 40, rows: 30, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
     startingData: {
       mapId: 'montagne-04',
-      startingDefenseBudget: 160,
-      startingAttackBudget: 120,
-      budgetGrowth: { defense: 50, attack: 40 },
+      startingDefenseBudget: 320,
+      startingAttackBudget: 240,
+      budgetGrowth: { defense: 100, attack: 80 },
       chateauHp: 7,
       initialWave: {
         lanes: [

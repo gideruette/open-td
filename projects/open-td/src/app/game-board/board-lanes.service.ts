@@ -98,6 +98,7 @@ export class BoardLanesService {
     this.messages.set(undefined);
     this.gameState.engine.pruneOrphanSpawns();
     this.gameState.refresh();
+    this.refreshAttackBudget();
   }
 
   /** Revient à l'outil Main (utilisé quand une épreuve démarre ou qu'une session se réinitialise). */
@@ -114,6 +115,7 @@ export class BoardLanesService {
       this.gameState.engine.pruneOrphanSpawns();
       this.gameState.refresh();
     }
+    this.refreshAttackBudget();
   }
 
   selectLane(index: number): void {
@@ -318,6 +320,7 @@ export class BoardLanesService {
       if (isSpawnCell(map, coord)) {
         this.drawingPathState.set([coord]);
         this.messages.set('Cliquez des cases adjacentes jusqu’au château.');
+        this.refreshAttackBudget();
         return;
       }
       if (isBorderCell(map, coord) && !isChateauCell(map, coord)) {
@@ -330,6 +333,7 @@ export class BoardLanesService {
         this.gameState.refresh();
         this.drawingPathState.set([coord]);
         this.messages.set('Nouveau spawn créé. Cliquez des cases adjacentes jusqu’au château.');
+        this.refreshAttackBudget();
         return;
       }
       this.messages.set('Le tracé doit démarrer sur une case de spawn ou une case de bord.');
@@ -393,6 +397,7 @@ export class BoardLanesService {
       return;
     }
     this.drawingPathState.set(nextPath);
+    this.refreshAttackBudget();
   }
 
   /**
@@ -480,10 +485,24 @@ export class BoardLanesService {
     this.refreshAttackBudget();
   }
 
-  /** Recalcule le budget d'attaque restant (dépend de la composition des voies en cours). */
+  /**
+   * Vague affichée pour le budget : les voies déjà composées, plus le tracé en cours (sans
+   * monstres) pour que le coût de ses cases apparaisse en temps réel pendant le dessin.
+   */
+  private previewWave(): Wave {
+    const wave = this.toWave(this.lanesState());
+    const drawingPath = this.drawingPathState();
+    if (!drawingPath || drawingPath.length === 0) {
+      return wave;
+    }
+    const tracePath: MapPath = { id: '__tracing__', nodes: drawingPath.map((p) => [p.x, p.y]) };
+    return { lanes: [...wave.lanes, { path: tracePath, units: [] }] };
+  }
+
+  /** Recalcule le budget d'attaque restant (dépend des voies en cours et du tracé en cours). */
   refreshAttackBudget(): void {
     this.budget.setAttackBudget(
-      this.gameState.engine.getAttackBudgetRemaining(this.toWave(this.lanesState())),
+      this.gameState.engine.getAttackBudgetRemaining(this.previewWave()),
       this.gameState.engine.getAttackBudget(),
     );
   }
