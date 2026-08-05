@@ -1,72 +1,43 @@
+@let selected = lane();
 @let index = laneIndex();
-@if (lane(); as selected) {
-  @if (index !== undefined) {
-    <div class="lane-card lane-card--selected">
-      <div class="lane-card__header">
-        <input
-          #nameInput
-          type="text"
-          class="lane-card__name"
-          [value]="selected.path.name || laneDisplayLabel(selected, index)"
-          [attr.aria-label]="'Nom de la voie ' + (index + 1)"
-          (change)="laneRename.emit(nameInput.value)"
-        />
-      </div>
+<div class="lane-card">
+  <input
+    #nameInput
+    type="text"
+    class="lane-card__name"
+    [value]="selected.path.name || laneDisplayLabel(selected, index)"
+    [attr.aria-label]="'Nom de la voie ' + (index + 1)"
+    (change)="laneRename.emit(nameInput.value)"
+  />
 
-      <div class="lane-card__actions">
-        <otd-button
-          variant="info"
-          size="sm"
-          [disabled]="trialRunning()"
-          (clicked)="laneRetrace.emit()"
-        >
-          Modifier le tracé
-        </otd-button>
-        <otd-button
-          variant="danger"
-          size="sm"
-          [disabled]="trialRunning()"
-          (clicked)="laneRemove.emit()"
-          ariaLabel="Supprimer ce chemin"
-        >
-          Supprimer
-        </otd-button>
-      </div>
-
-      <h3 class="lanes-panel__section">File</h3>
-      @if (selected.units.length === 0) {
-        <p class="lanes-panel__message">Aucun monstre.</p>
-      }
-      <ol class="queue-list">
-        @for (unit of selected.units; track $index; let unitIndex = $index) {
-          <li class="queue-item">
-            <span class="queue-item__name">{{ monsterDisplayName(unit.type) }}</span>
-            <span class="queue-item__actions">
-              <otd-button
-                size="sm"
-                [disabled]="unitIndex === 0 || trialRunning()"
-                (clicked)="unitMove.emit({ unitIndex, delta: -1 })"
-                ariaLabel="Monter"
-              >↑</otd-button>
-              <otd-button
-                size="sm"
-                [disabled]="unitIndex === selected.units.length - 1 || trialRunning()"
-                (clicked)="unitMove.emit({ unitIndex, delta: 1 })"
-                ariaLabel="Descendre"
-              >↓</otd-button>
-              <otd-button
-                variant="danger"
-                size="sm"
-                [disabled]="trialRunning()"
-                (clicked)="unitRemove.emit(unitIndex)"
-                ariaLabel="Retirer"
-              >×</otd-button>
-            </span>
-          </li>
-        }
-      </ol>
-
-      <h3 class="lanes-panel__section">Ajouter</h3>
+  @let unitIndex = selectedUnitIndex();
+  @if (unitIndex !== undefined) {
+    <div class="queue-toolbar" role="group" aria-label="Déplacer le monstre sélectionné">
+      <otd-button
+        size="sm"
+        [disabled]="trialRunning() || unitIndex === 0"
+        (clicked)="moveSelected(-1)"
+        ariaLabel="Déplacer vers la gauche"
+      >←</otd-button>
+      <span class="queue-toolbar__label">{{ monsterDisplayName(selected.units[unitIndex].type) }}</span>
+      <otd-button
+        size="sm"
+        [disabled]="trialRunning() || unitIndex === selected.units.length - 1"
+        (clicked)="moveSelected(1)"
+        ariaLabel="Déplacer vers la droite"
+      >→</otd-button>
+      <otd-button
+        variant="danger"
+        size="sm"
+        [disabled]="trialRunning()"
+        (clicked)="removeSelected()"
+        ariaLabel="Retirer ce monstre"
+      >
+        Supprimer
+      </otd-button>
+    </div>
+  } @else {
+    <div class="queue-add" role="group" aria-label="Ajouter un monstre">
       @for (type of monsterTypes; track type.id) {
         <otd-item-button
           [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
@@ -75,11 +46,48 @@
           [description]="type.description"
           [stats]="formatMonsterStats(type)"
           [disabled]="trialRunning() || !canAfford(type)"
-          (clicked)="monsterAppend.emit(type.id)"
+          (clicked)="appendAtCursor(type.id)"
         ></otd-item-button>
       }
     </div>
   }
-} @else {
-  <p class="lanes-panel__message">Sélectionnez un chemin pour le composer.</p>
-}
+
+  <div class="queue-file" role="list" aria-label="File de monstres">
+    @if (selected.units.length === 0) {
+      <p class="lanes-panel__message">Aucun monstre.</p>
+    }
+    <button
+      type="button"
+      class="queue-file__gap"
+      [class.queue-file__gap--active]="cursorIndex() === 0"
+      [disabled]="trialRunning() || unitIndex !== undefined"
+      aria-label="Insérer en position 1"
+      (click)="setCursor(0)"
+    >
+      <span class="queue-file__cursor-bar"></span>
+    </button>
+    @for (unit of selected.units; track $index; let unitIdx = $index) {
+      <button
+        type="button"
+        class="queue-file__item"
+        [class.queue-file__item--selected]="unitIndex === unitIdx"
+        [disabled]="trialRunning()"
+        [attr.aria-pressed]="unitIndex === unitIdx"
+        (click)="selectUnit(unitIdx)"
+      >
+        <img class="queue-file__sprite" [src]="'assets/sprites/' + unit.type + '.svg'" alt="" />
+        <span class="queue-file__name">{{ monsterDisplayName(unit.type) }}</span>
+      </button>
+      <button
+        type="button"
+        class="queue-file__gap"
+        [class.queue-file__gap--active]="cursorIndex() === unitIdx + 1"
+        [disabled]="trialRunning() || unitIndex !== undefined"
+        [attr.aria-label]="'Insérer en position ' + (unitIdx + 2)"
+        (click)="setCursor(unitIdx + 1)"
+      >
+        <span class="queue-file__cursor-bar"></span>
+      </button>
+    }
+  </div>
+</div>

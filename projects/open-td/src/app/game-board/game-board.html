@@ -1,5 +1,7 @@
 <section class="board" [class.board--attack]="phase() === 'attack'">
   <div class="board__stage">
+    <otd-board-message />
+
     <div class="board__map">
       <div
         #viewport
@@ -26,68 +28,38 @@
         }
       </div>
 
-      <otd-board-status [phase]="phase()" [palier]="palier()" [vagueCourante]="vagueCourante()" />
-
-      <otd-board-sheet
-        sheetId="board-targeting"
-        [open]="targetingOpen()"
-        [title]="activeLaneLabel()"
-        ariaLabel="Voie sélectionnée"
-        (closed)="closeTargeting()"
-      >
-        <otd-lanes-panel
-          [lane]="activeLane()"
-          [laneIndex]="activeLaneIndex()"
-          [trialRunning]="isTrialRunning()"
-          [attackBudgetRemaining]="getAttackBudgetRemaining()"
-          (laneRename)="renameActiveLane($event)"
-          (laneRemove)="removeActiveLane()"
-          (laneRetrace)="retraceActiveLane()"
-          (monsterAppend)="appendMonster($event)"
-          (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
-          (unitRemove)="removeActiveQueueUnit($event)"
-        />
-      </otd-board-sheet>
-
-      @if (targetingOpen()) {
-        <button
-          type="button"
-          class="board__sheet-backdrop"
-          aria-label="Fermer le menu"
-          (click)="closeDrawers()"
-        ></button>
-      }
+      <otd-board-status
+        [phase]="phase()"
+        [palier]="palier()"
+        [vagueCourante]="vagueCourante()"
+        [trialRunning]="isTrialRunning()"
+        (reset)="onResetClick()"
+      />
     </div>
 
     <otd-board-hud
       [phase]="phase()"
       [trialRunning]="isTrialRunning()"
       [drawingPath]="isDrawingPath()"
-      [remainingBudget]="remainingBudget()"
-      [defenseBudgetTotal]="defenseBudgetTotal()"
-      [attackBudgetRemaining]="getAttackBudgetRemaining()"
-      [attackBudgetTotal]="attackBudgetTotal()"
-      [chateauHp]="trialChateauHp() ?? chateauMaxHp()"
-      [chateauMaxHp]="chateauMaxHp()"
       [breachCount]="trialBreachCount() ?? 0"
-      [lanes]="lanes()"
       [activeLaneIndex]="activeLaneIndex()"
-      [targetingOpen]="targetingOpen()"
-      [canLaunch]="canLaunch()"
-      [message]="message()"
+      [activeLane]="activeLane()"
+      [lanes]="lanes()"
       [pickingActive]="isPickingTower()"
       [pickingHasTower]="!!pickingTower()"
       [selectedTypeId]="selectedTypeId()"
       (typeSelect)="choosePreviewType($event)"
       (confirmPlace)="confirmPlaceTower()"
       (deleteTower)="deleteSelected()"
-      (resetDefense)="resetDefenseSession()"
-      (laneSelect)="selectLane($event)"
       (startTracing)="startTracing()"
       (undoTracePoint)="undoLastTracePoint()"
       (cancelTracing)="cancelTracing()"
-      (targetingToggle)="toggleTargeting()"
-      (launch)="onLaunch()"
+      (laneSelect)="selectLane($event)"
+      (laneRename)="renameActiveLane($event)"
+      (laneRemove)="removeActiveLane()"
+      (monsterAppend)="appendMonster($event)"
+      (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
+      (unitRemove)="removeActiveQueueUnit($event)"
     />
   </div>
 </section>

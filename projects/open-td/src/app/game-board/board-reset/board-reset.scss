@@ -1,0 +1,43 @@
+:host {
+  display: contents;
+}
+
+.board-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid #5a2a2a;
+  border-radius: 999px;
+  background: #2a1414;
+  color: #ff9a8a;
+  cursor: pointer;
+  pointer-events: auto;
+
+  &:hover:not(:disabled) {
+    background: #3a1a1a;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &--confirming {
+    border-color: #ff9a8a;
+    background: #5a2a2a;
+    animation: board-reset-pulse 0.9s ease-in-out infinite;
+  }
+}
+
+@keyframes board-reset-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 154, 138, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 0.35rem rgba(255, 154, 138, 0);
+  }
+}

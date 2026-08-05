@@ -4,14 +4,24 @@
   [class.otd-item-button--selected]="selected()"
   [disabled]="disabled()"
   (click)="clicked.emit($event)"
+  (pointerenter)="showTooltip($event)"
+  (pointerleave)="hideTooltip()"
+  (focus)="showTooltip($event)"
+  (blur)="hideTooltip()"
 >
   <img class="otd-item-button__sprite" [src]="spriteSrc()" alt="" />
   <span class="otd-item-button__name">{{ label() }}</span>
   <span class="otd-item-button__meta">{{ meta() }}</span>
-  <otd-tooltip
-    class="otd-item-button__tooltip"
-    [heading]="label()"
-    [description]="description()"
-    [stats]="stats()"
-  ></otd-tooltip>
 </button>
+<div #tooltipHost class="otd-item-button__tooltip-host">
+  @if (tooltipPos(); as pos) {
+    <otd-tooltip
+      class="otd-item-button__tooltip"
+      [style.left.px]="pos.left"
+      [style.top.px]="pos.top"
+      [heading]="label()"
+      [description]="description()"
+      [stats]="stats()"
+    ></otd-tooltip>
+  }
+</div>

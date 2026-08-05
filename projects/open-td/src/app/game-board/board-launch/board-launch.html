@@ -1,0 +1,27 @@
+<button
+  type="button"
+  class="board-launch"
+  [disabled]="!state().canLaunch"
+  [attr.aria-label]="state().trialRunning ? 'Simulation en cours' : 'Lancer'"
+  [title]="state().trialRunning ? 'Simulation en cours' : 'Lancer'"
+  (click)="onClick()"
+>
+  @if (state().trialRunning) {
+    <svg
+      class="board-launch__icon board-launch__icon--spinner"
+      viewBox="0 0 24 24"
+      width="22"
+      height="22"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"
+      stroke-linecap="round"
+    >
+      <path d="M12 3a9 9 0 1 0 9 9" />
+    </svg>
+  } @else {
+    <svg class="board-launch__icon" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  }
+</button>

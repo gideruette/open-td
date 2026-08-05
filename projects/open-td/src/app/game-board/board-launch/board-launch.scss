@@ -1,0 +1,43 @@
+:host {
+  display: contents;
+}
+
+.board-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  border: 1px solid #2a4a2f;
+  border-radius: 999px;
+  background: #142a17;
+  color: #9de89f;
+  cursor: pointer;
+  pointer-events: auto;
+
+  &:hover:not(:disabled) {
+    background: #1a3a1e;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+.board-launch__icon {
+  // Le triangle "lecture" paraît décentré à gauche à taille égale : recentrage optique.
+  margin-left: 2px;
+}
+
+.board-launch__icon--spinner {
+  margin-left: 0;
+  animation: board-launch-spin 0.9s linear infinite;
+}
+
+@keyframes board-launch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

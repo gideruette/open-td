@@ -4,18 +4,19 @@
 
 .otd-item-button {
   position: relative;
-  display: grid;
-  grid-template-columns: 2rem 1fr;
-  grid-template-rows: auto auto;
-  column-gap: 0.5rem;
-  row-gap: 0.15rem;
-  padding: 0.5rem 0.65rem;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  width: 3.9rem;
+  padding: 0.28rem 0.25rem;
   border: 1px solid #2a2f3a;
   border-radius: 0.35rem;
   background: #171a22;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 
   &:hover:not(:disabled) {
@@ -31,36 +32,37 @@
     border-color: #5fb0ff;
     background: #1d2a3a;
   }
+}
 
-  &:hover .otd-item-button__tooltip,
-  &:focus-visible .otd-item-button__tooltip {
-    opacity: 1;
-    visibility: visible;
-  }
+// Rattachée à <body> (voir item-button.ts) : ne doit jamais introduire de boîte là où elle est déclarée.
+.otd-item-button__tooltip-host {
+  display: contents;
 }
 
 .otd-item-button__tooltip {
-  position: absolute;
+  position: fixed;
+  left: 0;
   top: 0;
-  left: calc(100% + 0.5rem);
-  z-index: 20;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.12s ease;
+  transform: translateX(-50%);
+  z-index: 1000;
+  pointer-events: none;
 }
 
 .otd-item-button__sprite {
-  grid-row: 1 / 3;
-  width: 2rem;
-  height: 2rem;
+  width: 1.5rem;
+  height: 1.5rem;
   object-fit: contain;
 }
 
 .otd-item-button__name {
+  width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 0.64rem;
   font-weight: 600;
+  line-height: 1.1;
 }
 
 .otd-item-button__meta {
-  font-size: 0.8rem;
+  font-size: 0.6rem;
   opacity: 0.7;
 }

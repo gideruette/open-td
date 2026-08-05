@@ -1,0 +1,41 @@
+<button
+  type="button"
+  class="board-reset"
+  [class.board-reset--confirming]="confirming()"
+  [disabled]="disabled()"
+  [attr.aria-label]="confirming() ? 'Confirmer : ' + label() : label()"
+  [title]="confirming() ? 'Confirmer : ' + label() : label()"
+  (click)="onClick()"
+>
+  @if (confirming()) {
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  } @else {
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  }
+</button>

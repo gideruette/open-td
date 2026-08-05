@@ -1,13 +1,36 @@
 <header class="board-status" aria-live="polite">
-  <img
-    class="board-status__icon"
-    [src]="phase() === 'defense' ? 'assets/sprites/shield-defense.svg' : 'assets/sprites/swords-attack.svg'"
-    alt=""
-  />
-  <span class="board-status__title">
-    Palier {{ palier() }} · {{ phase() === 'defense' ? 'Défense' : 'Attaque' }}
-  </span>
-  @if (phase() === 'defense') {
-    <span class="board-status__meta">{{ describeWave(vagueCourante()) }}</span>
-  }
+  <div class="board-status__row">
+    <img
+      class="board-status__icon"
+      [src]="
+        phase() === 'defense'
+          ? 'assets/sprites/shield-defense.svg'
+          : 'assets/sprites/swords-attack.svg'
+      "
+      alt=""
+    />
+    <span class="board-status__title">
+      Palier {{ palier() }} · {{ phase() === 'defense' ? 'Défense' : 'Attaque' }}
+    </span>
+    @if (phase() === 'defense') {
+      <span class="board-status__meta">{{ describeWave(vagueCourante()) }}</span>
+    }
+    <span class="board-status__budget">
+      <img
+        class="board-status__budget-icon"
+        [src]="
+          phase() === 'defense'
+            ? 'assets/sprites/budget-defense.svg'
+            : 'assets/sprites/budget-attack.svg'
+        "
+        alt=""
+      />
+      {{ budget().remaining }}/{{ budget().total }}
+    </span>
+  </div>
+
+  <div class="board-status__actions">
+    <otd-board-reset [disabled]="trialRunning()" [label]="resetLabel()" (confirm)="reset.emit()" />
+    <otd-board-launch />
+  </div>
 </header>

@@ -1,4 +1,57 @@
 <div class="board-hud" role="toolbar" aria-label="Commandes de jeu">
+  @if (phase() === 'attack' && !drawingPath()) {
+    <div class="board-hud__lane">
+      <div class="board-hud__lane-tabs" role="tablist" aria-label="Voies">
+        @for (entry of lanes(); track entry.path.id; let i = $index) {
+          <button
+            type="button"
+            class="board-hud__lane-tab"
+            [class.board-hud__lane-tab--active]="activeLaneIndex() === i"
+            [attr.aria-selected]="activeLaneIndex() === i"
+            [disabled]="trialRunning()"
+            (click)="laneSelect.emit(i)"
+          >
+            {{ laneDisplayLabel(entry, i) }}
+          </button>
+        }
+        <button
+          type="button"
+          class="board-hud__lane-action board-hud__lane-action--add"
+          [disabled]="trialRunning()"
+          aria-label="Ajouter un chemin"
+          title="Ajouter un chemin"
+          (click)="startTracing.emit()"
+        >
+          +
+        </button>
+        @if (activeLane()) {
+          <button
+            type="button"
+            class="board-hud__lane-action board-hud__lane-action--remove"
+            [disabled]="trialRunning()"
+            aria-label="Supprimer ce chemin"
+            title="Supprimer ce chemin"
+            (click)="laneRemove.emit()"
+          >
+            Supprimer
+          </button>
+        }
+      </div>
+      @if (activeLane(); as lane) {
+        <otd-lanes-panel
+          [lane]="lane"
+          [laneIndex]="activeLaneIndex()!"
+          [trialRunning]="trialRunning()"
+          [attackBudgetRemaining]="attackBudgetRemaining()"
+          (laneRename)="laneRename.emit($event)"
+          (monsterAppend)="monsterAppend.emit($event)"
+          (unitMove)="unitMove.emit($event)"
+          (unitRemove)="unitRemove.emit($event)"
+        />
+      }
+    </div>
+  }
+
   @if (phase() === 'defense') {
     @if (pickingActive()) {
       <div class="board-hud__tools" role="group" aria-label="Tours">
@@ -20,109 +73,36 @@
         }
       </div>
     }
-  } @else if (phase() === 'attack') {
+  } @else if (phase() === 'attack' && drawingPath()) {
     <div class="board-hud__tools" role="group" aria-label="Chemins">
-      @if (drawingPath()) {
-        <otd-button size="sm" (clicked)="undoTracePoint.emit()">Annuler point</otd-button>
-        <otd-button size="sm" (clicked)="cancelTracing.emit()">Annuler tracé</otd-button>
-      } @else {
-        @for (lane of lanes(); track lane.path.id; let index = $index) {
-          <button
-            type="button"
-            class="board-hud__tool"
-            [class.board-hud__tool--active]="activeLaneIndex() === index"
-            [disabled]="trialRunning()"
-            [attr.aria-pressed]="activeLaneIndex() === index"
-            (click)="laneSelect.emit(index)"
-          >
-            {{ laneDisplayLabel(lane, index) }}
-          </button>
-        }
-        <button
-          type="button"
-          class="board-hud__tool board-hud__tool--add"
-          [disabled]="trialRunning()"
-          aria-label="Ajouter un chemin"
-          title="Ajouter un chemin"
-          (click)="startTracing.emit()"
-        >
-          +
-        </button>
-      }
+      <otd-button size="sm" (clicked)="undoTracePoint.emit()">Annuler point</otd-button>
+      <otd-button size="sm" (clicked)="cancelTracing.emit()">Annuler tracé</otd-button>
     </div>
   }
 
   <div class="board-hud__stats">
-    <span class="board-hud__budget">
-      <img
-        class="board-hud__budget-icon"
-        [src]="phase() === 'defense' ? 'assets/sprites/budget-defense.svg' : 'assets/sprites/budget-attack.svg'"
-        alt=""
-      />
-      @if (phase() === 'defense') {
-        {{ remainingBudget() }}/{{ defenseBudgetTotal() }}
-      } @else {
-        {{ attackBudgetRemaining() }}/{{ attackBudgetTotal() }}
-      }
-    </span>
-    <span class="board-hud__chateau">
-      @if (phase() === 'defense') {
-        PV {{ chateauHp() }}/{{ chateauMaxHp() }}
-      } @else {
-        Brèches {{ breachCount() }}
-      }
-    </span>
-  </div>
-
-  <div class="board-hud__menus">
-    @if (phase() === 'defense') {
-      @if (!pickingActive()) {
-        <button
-          type="button"
-          class="board-hud__chip"
-          [disabled]="trialRunning()"
-          title="Réinitialiser la défense"
-          (click)="resetDefense.emit()"
-        >
-          Réinitialiser
-        </button>
-      }
-    } @else if (!drawingPath()) {
-      <button
-        type="button"
-        class="board-hud__chip"
-        [class.board-hud__chip--active]="targetingOpen()"
-        [disabled]="trialRunning() || activeLaneIndex() === undefined"
-        (click)="targetingToggle.emit()"
-        [attr.aria-expanded]="targetingOpen()"
-        aria-controls="board-targeting"
-      >
-        Voie
-      </button>
+    @if (phase() === 'attack' && trialRunning()) {
+      <span class="board-hud__chateau">Brèches {{ breachCount() }}</span>
     }
   </div>
 
-  <div class="board-hud__launch">
-    @if (pickingActive() && pickingHasTower()) {
-      <otd-button variant="danger" [disabled]="trialRunning()" (clicked)="deleteTower.emit()">
-        Supprimer
-      </otd-button>
-    } @else if (pickingActive()) {
-      <otd-button variant="success" [disabled]="!canConfirmPlace()" (clicked)="confirmPlace.emit()">
-        Construire
-      </otd-button>
-    } @else {
-      <otd-button variant="success" [disabled]="!canLaunch()" (clicked)="launch.emit()">
-        {{ trialRunning() ? 'En cours…' : 'Lancer' }}
-      </otd-button>
-    }
-  </div>
+  @if (pickingActive()) {
+    <div class="board-hud__launch">
+      @if (pickingHasTower()) {
+        <otd-button variant="danger" [disabled]="trialRunning()" (clicked)="deleteTower.emit()">
+          Supprimer
+        </otd-button>
+      } @else {
+        <otd-button variant="success" [disabled]="!canConfirmPlace()" (clicked)="confirmPlace.emit()">
+          Construire
+        </otd-button>
+      }
+    </div>
+  }
 
   @if (pickingActive() && !pickingHasTower() && selectedType(); as type) {
     @if (!isAffordable(type)) {
       <p class="board-hud__message">Budget insuffisant pour construire cette tour.</p>
     }
-  } @else if (message(); as msg) {
-    <p class="board-hud__message">{{ msg }}</p>
   }
 </div>
