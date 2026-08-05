@@ -1,6 +1,6 @@
 import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
 import { MONSTER_TYPES, TOWER_TYPES, hexToWorld } from 'shared';
-import { pathLength, pointAtDistance } from './path';
+import { PATH_CELL_COST, expandPathCells, pathCellsCost, pathLength, pointAtDistance } from './path';
 
 /** Candidat de ciblage : vue minimale d'un monstre utile au choix de la cible d'une tour. */
 export interface TargetCandidate {
@@ -50,12 +50,17 @@ export function totalChateauDamage(
   );
 }
 
-/** Coût total (budget d'attaque) d'une vague, toutes voies confondues (CONCEPTION.md §5.1). */
+/**
+ * Coût total (budget d'attaque) d'une vague, toutes voies confondues (CONCEPTION.md §5.1) :
+ * coût des monstres, plus le coût des cases de chemin occupées par les voies — chaque case
+ * n'est facturée qu'une fois même si plusieurs voies s'y superposent (CONCEPTION.md §5.3).
+ */
 export function waveCost(
   wave: Wave,
   monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
+  pathCellCost: number = PATH_CELL_COST,
 ): number {
-  return wave.lanes.reduce(
+  const monstersCost = wave.lanes.reduce(
     (total, lane) =>
       total +
       lane.units.reduce((laneTotal, unit) => {
@@ -64,6 +69,7 @@ export function waveCost(
       }, 0),
     0,
   );
+  return monstersCost + pathCellsCost(wave.lanes.map((lane) => lane.path), pathCellCost);
 }
 
 /**
@@ -93,10 +99,10 @@ export interface MonsterInstance {
 export type DefenseOutcome = 'pending' | 'success' | 'failure';
 
 /**
- * Camp du joueur pour cette simulation : `defense` (tenir vagueCourante, château qui survit)
- * ou `attack` (percer avec une vague composée, ≥1 monstre au château) — CONCEPTION.md §5.4.
- * La mécanique de simulation (spawn, déplacement, tir, dégâts) est identique dans les deux
- * cas ; seule l'interprétation de la victoire/défaite change.
+ * Camp du joueur pour cette simulation : `defense` (tenir vagueCourante, château qui n'encaisse
+ * aucun dégât) ou `attack` (percer avec une vague composée jusqu'à détruire le château) —
+ * CONCEPTION.md §5.4. La mécanique de simulation (spawn, déplacement, tir, dégâts) est identique
+ * dans les deux cas ; seule l'interprétation de la victoire/défaite change.
  */
 export type SimulationMode = 'defense' | 'attack';
 
@@ -116,8 +122,11 @@ const SPAWN_GAP_REFERENCE_SPEED = 0.25;
 /**
  * Simulation déterministe, tick par tick, d'une épreuve (défense ou attaque) : la vague
  * donnée — une ou plusieurs voies actives simultanément, CONCEPTION.md §5.3 — est envoyée
- * sur la forteresse (tours figées) jusqu'à ce que le château tombe, que toutes les voies soient
- * entièrement traitées, ou qu'une brèche survienne.
+ * sur la forteresse (tours figées). En défense, l'épreuve tourne jusqu'à ce qu'il n'y ait plus
+ * aucun monstre sur la carte (toutes les voies traitées) — le château peut encaisser des dégâts
+ * en cours de route sans arrêter la simulation, seul le résultat à la fin compte (CONCEPTION.md
+ * §12) : tout dégât, même sans faire tomber le château à 0, condamne la défense. En attaque, elle
+ * s'arrête dès que le château est détruit (0 PV).
  */
 export class DefenseSimulation {
   private tick = 0;
@@ -133,7 +142,7 @@ export class DefenseSimulation {
   constructor(
     private readonly towers: readonly TowerInstance[],
     wave: Wave,
-    chateauMaxHp: number,
+    private readonly chateauMaxHp: number,
     private readonly monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
     private readonly towerCatalog: readonly TowerType[] = TOWER_TYPES,
     private readonly ticksBetweenSpawns: number = DEFAULT_TICKS_BETWEEN_SPAWNS,
@@ -163,7 +172,11 @@ export class DefenseSimulation {
     return this.chateauHp;
   }
 
-  /** Nombre de monstres ayant atteint le château jusqu'ici (condition de succès en attaque). */
+  /**
+   * Nombre de monstres ayant atteint le château jusqu'ici — statistique d'affichage : une brèche
+   * n'entraîne plus à elle seule la victoire en attaque, il faut détruire le château (voir
+   * `resolveOutcome`).
+   */
   getBreachCount(): number {
     return this.breachCount;
   }
@@ -374,7 +387,7 @@ export class DefenseSimulation {
     const allLanesSpawned = this.lanes.every((lane) => lane.spawnQueue.length === 0);
 
     if (this.mode === 'attack') {
-      if (this.breachCount > 0) {
+      if (this.chateauHp <= 0) {
         this.outcome = 'success';
         return;
       }
@@ -384,12 +397,69 @@ export class DefenseSimulation {
       return;
     }
 
-    if (this.chateauHp <= 0) {
-      this.outcome = 'failure';
+    if (!allLanesSpawned || this.monsters.length > 0) {
       return;
     }
-    if (allLanesSpawned && this.monsters.length === 0) {
-      this.outcome = 'success';
+    this.outcome = this.chateauHp >= this.chateauMaxHp ? 'success' : 'failure';
+  }
+}
+
+/**
+ * Nombre de cases distinctes occupées par des tours ou par une voie de la vague (routes) : la
+ * mesure d'« étalement » d'une solution — voir `phaseScore`, qui l'utilise pour départager deux
+ * solutions réussissant toutes les deux la phase. Une case comptant à la fois une tour et un bout
+ * de route (rare, mais possible sur les voies non tenues par la défense candidate) n'est comptée
+ * qu'une fois.
+ */
+export function spreadCellCount(towers: readonly TowerInstance[], wave: Wave): number {
+  const cells = new Set<string>();
+  for (const tower of towers) {
+    cells.add(`${tower.position.x},${tower.position.y}`);
+  }
+  for (const lane of wave.lanes) {
+    for (const cell of expandPathCells(lane.path)) {
+      cells.add(`${cell.x},${cell.y}`);
     }
   }
+  return cells.size;
+}
+
+/**
+ * Décalage utilisé par `phaseScore` pour garantir qu'un score de succès (fonction de l'étalement,
+ * voir `spreadCellCount`) reste toujours mieux classé qu'un score d'échec (vie du château restante,
+ * bornée par `chateauMaxHp`) — bien plus grand que n'importe quelle grille ou vie de château
+ * réaliste du jeu.
+ */
+const SPREAD_SCORE_BASE = 1_000_000;
+
+/**
+ * Score d'une épreuve (défense ou attaque), obtenu en rejouant l'épreuve jusqu'à son terme
+ * (CONCEPTION.md §12 « Scoring »). Deux régimes distincts :
+ * - Échec : vie du château restante à la fin de l'épreuve — en défense, le château a encaissé au
+ *   moins un point de dégât sans que la victoire (aucun dégât) soit exigée, jusqu'à être détruit
+ *   en cours de route (score alors très négatif, voir `resolveOutcome`) ; en attaque, le château a
+ *   survécu sans être détruit (score alors strictement positif). Dans les deux cas, l'ampleur du
+ *   score reste une information utile pour départager deux solutions qui échouent toutes les deux.
+ * - Succès : deux solutions qui terminent toutes les deux la phase (château intact en défense,
+ *   détruit en attaque) ne sont plus départagées par la vie du château restante, mais par leur
+ *   étalement (`spreadCellCount`) — la plus étalée (le plus de cases prises par des routes ou des
+ *   tours) l'emporte : plus un joueur occupe de cases, plus il contraint son adversaire au palier
+ *   suivant (moins de cases libres où tracer une route ou poser une tour). `SPREAD_SCORE_BASE`
+ *   assure que ce score reste toujours strictement meilleur qu'un score d'échec.
+ */
+export function phaseScore(
+  towers: readonly TowerInstance[],
+  wave: Wave,
+  chateauMaxHp: number,
+  monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
+  towerCatalog: readonly TowerType[] = TOWER_TYPES,
+  mode: SimulationMode = 'defense',
+): number {
+  const simulation = new DefenseSimulation(towers, wave, chateauMaxHp, monsterCatalog, towerCatalog, undefined, mode);
+  simulation.runToCompletion();
+  if (simulation.getOutcome() === 'failure') {
+    return simulation.getChateauHp();
+  }
+  const spread = spreadCellCount(towers, wave);
+  return mode === 'defense' ? SPREAD_SCORE_BASE + spread : -(SPREAD_SCORE_BASE + spread);
 }

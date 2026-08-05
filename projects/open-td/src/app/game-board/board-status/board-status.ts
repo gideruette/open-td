@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { BoardAiSolution } from '../board-ai-solution/board-ai-solution';
 import { BoardBudgetService } from '../board-budget.service';
 import { BoardDefenseService } from '../board-defense.service';
 import { BoardEngineService } from '../board-engine.service';
@@ -10,7 +11,7 @@ import { BoardTrialService } from '../board-trial.service';
 /** Pastille de phase en haut du plateau (palier + vague courte + budget + lancement + réinitialisation). */
 @Component({
   selector: 'otd-board-status',
-  imports: [BoardLaunch, BoardReset],
+  imports: [BoardAiSolution, BoardLaunch, BoardReset],
   templateUrl: './board-status.html',
   styleUrl: './board-status.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,

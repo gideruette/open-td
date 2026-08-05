@@ -1,20 +1,25 @@
-@if (selectedMapId(); as mapId) {
-  <main class="shell">
-    <header class="shell__header">
-      <h1>{{ title() }}</h1>
-      <div class="shell__header-actions">
-        <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">?</button>
-        <button type="button" class="shell__change-map" (click)="backToMenu()">Changer de carte</button>
-      </div>
-    </header>
-    <otd-game-board [mapId]="mapId" />
-    <router-outlet />
-  </main>
+@if (selectedSlots(); as slots) {
+  @if (selectedMapId(); as mapId) {
+    <main class="shell">
+      <header class="shell__header">
+        <h1>{{ title() }}</h1>
+        <div class="shell__header-actions">
+          <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">?</button>
+          <button type="button" class="shell__change-map" (click)="changeMode()">Changer de mode</button>
+          <button type="button" class="shell__change-map" (click)="backToMenu()">Changer de carte</button>
+        </div>
+      </header>
+      <otd-game-board [mapId]="mapId" [slots]="slots" (restart)="changeMode()" />
+      <router-outlet />
+    </main>
+  } @else {
+    <otd-map-select (mapChosen)="onMapChosen($event)" />
+    <button type="button" class="shell__help shell__help--floating" aria-label="Règles du jeu" (click)="openHelp()">
+      ?
+    </button>
+  }
 } @else {
-  <otd-map-select (mapChosen)="onMapChosen($event)" />
-  <button type="button" class="shell__help shell__help--floating" aria-label="Règles du jeu" (click)="openHelp()">
-    ?
-  </button>
+  <otd-match-setup (slotsChosen)="onSlotsChosen($event)" />
 }
 
 <otd-help-modal [open]="helpOpen()" (closed)="closeHelp()" />

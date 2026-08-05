@@ -5,12 +5,14 @@ import {
   addMapPath,
   addMapSpawn,
   cellsBetween,
+  coveredCells,
   expandPathCells,
   hasUniqueCell,
   isAdjacentCell,
   isSpawnCell,
   isSpawnConnected,
   isValidPathStep,
+  pathCellsCost,
   pathLength,
   pointAtDistance,
   pruneOrphanSpawns,
@@ -258,6 +260,38 @@ describe('hasUniqueCell', () => {
     const left: MapPath = { id: 'left', nodes: [[0, 0], [2, 0]] };
     const right: MapPath = { id: 'right', nodes: [[2, 0], [4, 0]] };
     expect(hasUniqueCell(expandPathCells(straightPath), [left, right])).toBe(false);
+  });
+});
+
+describe('coveredCells', () => {
+  it('unions the cells of every path, deduplicating overlaps', () => {
+    const covered = coveredCells([straightPath, straightPath]);
+    expect(covered.size).toBe(expandPathCells(straightPath).length);
+  });
+
+  it('counts distinct cells across non-overlapping paths', () => {
+    const other: MapPath = { id: 'other', nodes: [[0, 5], [4, 5]] };
+    const covered = coveredCells([straightPath, other]);
+    expect(covered.size).toBe(
+      expandPathCells(straightPath).length + expandPathCells(other).length,
+    );
+  });
+});
+
+describe('pathCellsCost', () => {
+  it('charges every distinct cell once at the given rate', () => {
+    expect(pathCellsCost([straightPath], 3)).toBe(expandPathCells(straightPath).length * 3);
+  });
+
+  it('charges a cell only once even when two paths share it (CONCEPTION.md §5.3)', () => {
+    const overlapping: MapPath = { id: 'overlapping', nodes: [[0, 0], [4, 0]] };
+    expect(pathCellsCost([straightPath, overlapping], 3)).toBe(
+      pathCellsCost([straightPath], 3),
+    );
+  });
+
+  it('is zero for no paths', () => {
+    expect(pathCellsCost([])).toBe(0);
   });
 });
 

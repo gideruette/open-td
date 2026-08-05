@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameMap, MapPath, MapSpawn, StartingData, Wave, WaveLane, WaveUnit } from 'shared';
 import { GameEngine } from './engine';
+import { pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 3], [3, 3]] };
 const p2: MapPath = { id: 'p2', nodes: [[3, 0], [3, 3]] };
@@ -334,13 +335,13 @@ describe('GameEngine', () => {
 
     it('runs a composed wave against the frozen fortress in attack mode', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      engine.startRun(map, makeStartingData({ chateauHp: 1 }));
       engine.resolveDefenseSuccess();
 
       const composedWave = wave(lane([{ type: 'goblin' }]));
       const trial = engine.startAttackTrial(composedWave);
 
-      expect(trial.runToCompletion()).toBe('success'); // no towers defending, the goblin gets through
+      expect(trial.runToCompletion()).toBe('success'); // no towers defending, the goblin destroys the château
     });
 
     it('replaces vagueCourante, raises the palier and grows both budgets on attack success', () => {
@@ -386,7 +387,9 @@ describe('GameEngine', () => {
       // goblin cost 5, orc cost 12 (shared/monsters.ts)
       const composedWave = wave(lane([{ type: 'goblin' }, { type: 'orc' }]));
 
-      expect(engine.getAttackBudgetRemaining(composedWave)).toBe(80 - 5 - 12);
+      expect(engine.getAttackBudgetRemaining(composedWave)).toBe(
+        80 - 5 - 12 - pathCellsCost([p1]),
+      );
     });
   });
 

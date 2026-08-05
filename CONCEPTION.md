@@ -14,7 +14,7 @@
 Open TD est un jeu de stratégie solo où le joueur est à la fois architecte et assiégeant de **sa propre** forteresse.
 
 1. **Phase Défense** — placer / améliorer des tours, puis **tenir** face à la vague courante.
-2. **Phase Attaque** — composer une vague (ordre + itinéraire) pour **percer** la forteresse qu’il vient de bâtir.
+2. **Phase Attaque** — composer une vague (ordre + itinéraire) pour **détruire** la forteresse qu’il vient de bâtir.
 3. **Résolution** — simulation ; succès ou échec de l’objectif de phase.
 4. **Succès** → bascule vers l’autre phase. **Échec** → rester dans la phase et réessayer.
 
@@ -24,7 +24,7 @@ Le plaisir vient du dialogue avec soi-même : _« Ma défense tient contre ce qu
 
 ### Promesse joueur
 
-> « Je bâtis une forteresse, je tiens contre la vague, je la perce avec une nouvelle composition — et cette composition devient mon prochain défi à défendre. »
+> « Je bâtis une forteresse, je tiens contre la vague sans la moindre égratignure, je la détruis avec une nouvelle composition — et cette composition devient mon prochain défi à défendre. »
 
 ---
 
@@ -89,10 +89,10 @@ Le plaisir vient du dialogue avec soi-même : _« Ma défense tient contre ce qu
 
 ### Règle d’alternance
 
-| Phase en cours | Condition de succès                    | Effet                                                                         |
-| -------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
-| **Défense**    | Le château survit à `vagueCourante`    | Passage en **Attaque** (forteresse **figée**)                                 |
-| **Attaque**    | Au moins un monstre atteint le château | `vagueCourante` ← cette vague réussie ; retour **Défense** (budget↑, palier↑) |
+| Phase en cours | Condition de succès                                        | Effet                                                                         |
+| -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Défense**    | Le château ne subit **aucun dégât** face à `vagueCourante` | Passage en **Attaque** (forteresse **figée**)                                 |
+| **Attaque**    | Le château est **détruit** (PV à 0)                        | `vagueCourante` ← cette vague réussie ; retour **Défense** (budget↑, palier↑) |
 
 L’échec **ne change pas** de phase : le joueur réorganise tours ou vague et relance (**tentatives illimitées**).  
 Une attaque **échouée** ne remplace pas `vagueCourante`.
@@ -119,7 +119,7 @@ Une attaque **échouée** ne remplace pas `vagueCourante`.
 
 ### Objectif
 
-Construire une défense capable de **survivre** à `vagueCourante`. Succès → la forteresse est verrouillée pour la phase Attaque.
+Construire une défense capable de **tenir `vagueCourante` sans le moindre dégât**. Succès → la forteresse est verrouillée pour la phase Attaque.
 
 ### Actions joueur
 
@@ -141,7 +141,7 @@ Le joueur **ne compose pas** la vague en phase Défense. Il affronte `vagueCoura
 | **Vague #0 pré-construite**  | Première défense de la run (seule vague data du jeu)                 |
 | **Dernière attaque réussie** | Toutes les défenses suivantes (composition + ordre + path conservés) |
 
-Conséquence design : en phase Attaque, le joueur sait que sa vague, si elle perce, devra ensuite être **défendue**. Composer une vague « trop forte » rend le cycle suivant plus dur.
+Conséquence design : en phase Attaque, le joueur sait que sa vague, si elle détruit le château, devra ensuite être **défendue sans le moindre dégât**. Composer une vague « trop forte » rend le cycle suivant plus dur.
 
 Le joueur peut **prévisualiser** `vagueCourante` (liste, ordre, chemin) avant de valider sa défense.
 
@@ -168,7 +168,7 @@ Chaque tour cible automatiquement le monstre le plus avancé sur son chemin, à 
 
 ### Château
 
-- PV limités ; s’ils tombent à 0 pendant l’épreuve → **échec de défense** (rester en phase Défense, retries illimités).
+- PV limités ; le **moindre point de dégât** encaissé pendant l’épreuve → **échec de défense** (rester en phase Défense, retries illimités), que le château tombe à 0 ou non.
 - Entre deux tentatives de défense : forteresse éditable tant que non validée ; après succès, **snapshot figé** pour l’Attaque.
 - Entre deux **cycles** : la forteresse **persiste** (les tours restent) ; le budget du nouveau palier s’ajoute pour améliorer.
 
@@ -180,11 +180,11 @@ Chaque tour cible automatiquement le monstre le plus avancé sur son chemin, à 
 
 ---
 
-## 5. Phase Attaque — Percer sa propre forteresse
+## 5. Phase Attaque — Détruire sa propre forteresse
 
 ### Objectif
 
-Avec un **budget d’attaque** du palier, faire atteindre le château de **sa** forteresse figée. Si la vague réussit, elle sera **conservée** comme prochaine `vagueCourante`.
+Avec un **budget d’attaque** du palier, **détruire** le château (PV à 0) de **sa** forteresse figée. Si la vague réussit, elle sera **conservée** comme prochaine `vagueCourante`.
 
 ### 5.1 Composition de vague
 
@@ -225,16 +225,24 @@ La carte expose des chemins prédéfinis spawn → château, mais l’attaquant 
 
 Preview avant validation : les voies composées et le tracé en cours restent visibles sur la grille avant de lancer l’attaque.
 
+### Cases de chemin payantes
+
+Chaque case occupée par un chemin (prédéfini ou tracé) est décomptée du budget d'attaque, au même titre qu'un monstre. Si plusieurs voies se superposent sur une même case, cette case n'est facturée **qu'une seule fois** pour l'ensemble de la vague. Retirer une voie récupère intégralement le coût de ses cases, comme pour ses monstres.
+
+### Chaque voie doit être empruntée
+
+Une voie composée sans aucun monstre en file ne peut pas être lancée : chaque chemin actif doit être emprunté par au moins un monstre. Une voie vidée de tous ses monstres reste affichée mais bloque le lancement, jusqu'à ce qu'elle soit garnie à nouveau ou supprimée.
+
 ### 5.4 Lancement & succès
 
 Simulation contre le **snapshot** de forteresse.
 
-- **Succès** : **≥ 1 monstre au château** → cette vague (composition + ordre + path) **remplace** `vagueCourante` ; nouveau palier ; retour Défense avec budget accru (forteresse persistante).
-- **Échec** : vague annihilée / château intact → réessayer l’attaque sans limite (même forteresse figée, `vagueCourante` inchangée).
+- **Succès** : **château détruit (PV à 0)** → cette vague (composition + ordre + path) **remplace** `vagueCourante` ; nouveau palier ; retour Défense avec budget accru (forteresse persistante).
+- **Échec** : le château survit à la fin de la vague, même percé par un ou plusieurs monstres → réessayer l’attaque sans limite (même forteresse figée, `vagueCourante` inchangée).
 
 La forteresse **ne se modifie pas** pendant la phase Attaque.
 
-Tension volontaire : la vague qui vient de percer devient le prochain mur à tenir — le joueur est jugé par ses propres choix d’assaut.
+Tension volontaire : la vague qui vient de détruire le château devient le prochain mur à tenir — le joueur est jugé par ses propres choix d’assaut.
 
 ---
 
@@ -247,10 +255,10 @@ Tension volontaire : la vague qui vient de percer devient le prochain mur à ten
 
 ### Conditions (MVP proposé)
 
-| Phase   | Succès                                | Échec                    |
-| ------- | ------------------------------------- | ------------------------ |
-| Défense | Château > 0 en fin de `vagueCourante` | Château ≤ 0              |
-| Attaque | ≥ 1 monstre atteint le château        | Aucun monstre au château |
+| Phase   | Succès                                       | Échec                                          |
+| ------- | ---------------------------------------------- | ------------------------------------------------ |
+| Défense | Aucun dégât reçu (PV = max) en fin de `vagueCourante` | Au moins 1 point de dégât reçu             |
+| Attaque | Château détruit (PV ≤ 0)                        | Château survit, même percé par un ou plusieurs monstres |
 
 Variantes possibles plus tard : seuil de dégâts, % de vague passée, score minimum.
 
@@ -259,8 +267,8 @@ Variantes possibles plus tard : seuil de dégâts, % de vague passée, score min
 Après chaque **attaque réussie** :
 
 - `vagueCourante` ← vague d’attaque qui vient de réussir (conservation intégrale)
-- Budget défense ↑ (pour pouvoir tenir cette vague plus dure)
-- Budget attaque ↑ (pour pouvoir percer une défense renforcée)
+- Budget défense ↑ (pour pouvoir tenir cette vague plus dure sans le moindre dégât)
+- Budget attaque ↑ (pour pouvoir détruire une défense renforcée)
 
 La montée en difficulté des vagues n’est **pas** scriptée palier par palier : elle émerge des compositions du joueur. Seule la vague #0 est authorée.
 
@@ -268,11 +276,11 @@ Fin de partie optionnelle : palier max, run endless avec high-score = palier att
 
 ### Scoring (proposition)
 
-| Métrique                       | Usage                |
-| --------------------------------- | -------------------- |
-| Palier max                        | High-score principal |
-| Cycles réussis                    | Stat de run          |
-| Perfect defense (0 dégât château) | Bonus / achievement  |
+| Métrique                                          | Usage                |
+| ---------------------------------------------------- | -------------------- |
+| Palier max                                        | High-score principal |
+| Cycles réussis                                    | Stat de run          |
+| Attaque minimale (château détruit, budget peu dépensé) | Bonus / achievement  |
 
 ---
 
@@ -283,7 +291,7 @@ Fin de partie optionnelle : palier max, run endless avec high-score = palier att
 | **Run solo**              | Oui | Alternance défense / attaque sur paliers                                                   |
 | **Sandbox**               | Oui | Construire + attaquer sans contrainte de palier (labo)                                     |
 | **Défi quotidien**        | Non | Carte + seed + palier fixes, classement local                                              |
-| **Partage de forteresse** | Non | Exporter un snapshot pour qu’un autre tente de le percer (post-MVP, pas d’adversaire live) |
+| **Partage de forteresse** | Non | Exporter un snapshot pour qu’un autre tente de le détruire (post-MVP, pas d’adversaire live) |
 
 Pas de vs IA, pas de hot-seat, pas de multijoueur.
 
@@ -375,7 +383,7 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
 ### Principes
 
 - Phase courante très visible (titre + couleur d’accent).
-- Objectif de succès rappelé en permanence (_« Tiens bon »_ / _« Perce le château »_).
+- Objectif de succès rappelé en permanence (_« Tiens bon, sans le moindre dégât »_ / _« Détruis le château »_).
 - Échec = feedback clair + retour immédiat à l’édition (tours ou vague).
 
 ### Écrans MVP
@@ -411,7 +419,7 @@ Le canvas est un composant Angular qui délègue toute la règle métier à `eng
 
 - Validation placement
 - Simulation vague
-- Évaluation succès défense / attaque (≥ 1 monstre au château)
+- Évaluation succès défense (aucun dégât château) / attaque (château détruit)
 - Conservation de vague (`vagueCourante`) au succès d’attaque
 - Transition de phase & montée de palier / budgets
 - Forteresse persistante entre cycles
@@ -433,7 +441,7 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 | 1 | Grille | **Hexagonale** (pointy-top, offset odd-r) |
 | 2 | Targeting des tours | **Fixe** : toujours le monstre le plus avancé à portée (pas de choix du joueur) |
 | 3 | Volants en MVP | **Non** (post-MVP) |
-| 4 | Succès attaque | **≥ 1 monstre au château** |
+| 4 | Succès attaque | **Château détruit** (PV à 0), pas seulement percé |
 | 5 | Entre deux défenses | Forteresse **persistante** (améliorer, pas reset) |
 | 6 | Stack | **Angular 22 + Canvas 2D** |
 | 7 | Tentatives | **Illimitées** |
@@ -442,6 +450,7 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 | 10 | Retrait d'un monstre en file (Attaque) | **Toujours gratuit** (budget récupéré intégralement) |
 | 11 | Réordonner la file d'une voie (Attaque) | **Toujours gratuit** |
 | 12 | Entre deux attaques | Plan d'attaque **persistant** (comme la forteresse), établi au succès ; éditable librement |
+| 13 | Succès défense | **Aucun dégât** reçu par le château, pas seulement survivre |
 
 ---
 
@@ -492,10 +501,10 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 ## 13. Équilibre (guidelines)
 
-- La vague #0 doit être tenable avec le budget défense de départ pour un joueur novice.
-- Le budget attaque N doit permettre de percer une défense N « bonne » avec une exécution soignée (ordre + path).
-- Le budget défense N+1 doit permettre de tenir la vague que le joueur vient d’utiliser pour percer — en **renforçant** la forteresse persistante, pas en recommençant from scratch.
-- Le joueur arbitrage risque/récompense : vague d’attaque minimale qui perce vs vague écrasante qui sera cauchemardesque à défendre ensuite.
+- La vague #0 doit être tenable **sans le moindre dégât** avec le budget défense de départ pour un joueur novice.
+- Le budget attaque N doit permettre de **détruire** une défense N « bonne » avec une exécution soignée (ordre + path).
+- Le budget défense N+1 doit permettre de tenir **sans dégât** la vague que le joueur vient d’utiliser pour détruire le château — en **renforçant** la forteresse persistante, pas en recommençant from scratch.
+- Le joueur arbitrage risque/récompense : vague d’attaque minimale qui détruit le château vs vague écrasante qui sera cauchemardesque à défendre ensuite.
 - L’ordre et le path restent des leviers majeurs.
 
 ---
@@ -521,7 +530,7 @@ Règle d’or : **testable sans navigateur** (Vitest / Jest / runner Angular).
 
 | Terme                   | Définition                                                                              |
 | ----------------------- | --------------------------------------------------------------------------------------- |
-| **Château**             | Bâtiment à protéger (défense) ou atteindre (attaque)                                    |
+| **Château**             | Bâtiment à protéger sans le moindre dégât (défense) ou à détruire (attaque)             |
 | **vagueCourante**       | Vague à défendre ; vague #0 puis dernière attaque réussie                               |
 | **Vague #0**            | Unique vague pré-construite fournie par le jeu                                          |
 | **Snapshot forteresse** | État figé des tours (placement, niveaux) pour l’Attaque                                 |

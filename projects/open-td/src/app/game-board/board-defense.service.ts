@@ -1,9 +1,8 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { canOccupyCell, canPlaceTower } from 'engine';
+import { canOccupyCell, canPlaceTower, evolveDefense, phaseScore, playDefensePhase } from 'engine';
+import type { GridCoord, TowerInstance } from 'shared';
 import { TOWER_TYPES, findTowerType } from 'shared';
-import type { GridCoord } from 'shared';
 import { BoardEngineService } from './board-engine.service';
-import { BoardLanesService } from './board-lanes.service';
 import { BoardMessageService } from './board-message.service';
 import { BoardTrialService } from './board-trial.service';
 
@@ -52,6 +51,26 @@ export class BoardDefenseService {
 
   /** Vrai tant qu'une case (vide ou occupée) est choisie dans la barre du bas. */
   readonly isPicking = computed(() => this.pickingCellState() !== undefined);
+
+  /**
+   * Debug : score (vie du château, potentiellement négative) que donnerait la défense posée
+   * contre vagueCourante, calculé à l'avance via `phaseScore` — sans lancer l'épreuve. `undefined`
+   * tant qu'aucune vague n'est chargée.
+   */
+  readonly defenseScore = computed(() => {
+    const wave = this.gameState.vagueCourante();
+    if (!wave) {
+      return undefined;
+    }
+    return phaseScore(
+      this.gameState.towers(),
+      wave,
+      this.gameState.chateauMaxHp(),
+      undefined,
+      undefined,
+      'defense',
+    );
+  });
 
   /**
    * Sélectionne une case tapée sur la grille (phase Défense) : reprend la tour existante si la case
@@ -128,12 +147,73 @@ export class BoardDefenseService {
     this.gameState.refresh();
   }
 
-  /** Abandonne les poses/suppressions de la phase Défense en cours et revient à la forteresse de départ. */
+  /** Supprime toutes les tours posées en phase Défense (retour à une forteresse vide). */
   resetSession(): void {
     if (this.gameState.phase() !== 'defense' || this.trial.isRunning() || this.isPicking()) {
       return;
     }
     this.gameState.engine.resetDefenseSession();
+    this.clearSelection();
+    this.messages.set(undefined);
+    this.gameState.refresh();
+  }
+
+  /**
+   * Debug : remplace les tours posées par la meilleure défense trouvée par l'IA Défense via
+   * l'algorithme génétique (`evolveDefense` dans `engine`) — sert à tester l'IA sans poser à la
+   * main.
+   */
+  addRandomDefense(): void {
+    if (this.gameState.phase() !== 'defense' || this.trial.isRunning()) {
+      return;
+    }
+    const map = this.gameState.map();
+    const wave = this.gameState.vagueCourante();
+    if (!map || !wave) {
+      return;
+    }
+
+    const towers = evolveDefense(
+      map,
+      wave,
+      this.gameState.engine.getDefenseBudget(),
+      this.gameState.chateauMaxHp(),
+    );
+    this.applyTowers(towers);
+  }
+
+  /**
+   * Fait jouer l'ordinateur la phase Défense à la place du joueur (case IA du système de slots) :
+   * remplace les tours posées par celles trouvées par `playDefensePhase` (point d'entrée IA
+   * officiel), avec `maxTime` ms de recherche.
+   */
+  playAiDefenseTurn(maxTime: number): void {
+    const map = this.gameState.map();
+    const wave = this.gameState.vagueCourante();
+    if (!map || !wave) {
+      return;
+    }
+
+    const towers =
+      playDefensePhase({
+        map,
+        wave,
+        defenseBudget: this.gameState.engine.getDefenseBudget(),
+        chateauMaxHp: this.gameState.chateauMaxHp(),
+        maxTime,
+      }) ?? [];
+    this.applyTowers(towers);
+  }
+
+  /** Remplace les tours posées par `towers` (efface les anciennes, pose les nouvelles). */
+  private applyTowers(towers: readonly TowerInstance[]): void {
+    for (const tower of this.gameState.towers()) {
+      this.gameState.engine.deleteTower(tower.id);
+    }
+    for (const tower of towers) {
+      this.gameState.engine.placeTower(tower.typeId, tower.position);
+    }
+
     this.clearSelection();
     this.messages.set(undefined);
     this.gameState.refresh();
@@ -146,6 +226,12 @@ export class BoardDefenseService {
       return false;
     }
     const type = findTowerType(typeId);
-    return canPlaceTower(this.gameState.map(), this.gameState.towers(), type, coord, budgetRemaining).ok;
+    return canPlaceTower(
+      this.gameState.map(),
+      this.gameState.towers(),
+      type,
+      coord,
+      budgetRemaining,
+    ).ok;
   }
 }

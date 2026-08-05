@@ -1,0 +1,108 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 1.5rem;
+  padding: 2.5rem 1.25rem;
+  overflow: auto;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #e8e6e1;
+  background: #12141a;
+}
+
+.match-setup {
+  display: grid;
+  gap: 1.5rem;
+  justify-items: center;
+  max-width: 32rem;
+}
+
+.match-setup__header {
+  text-align: center;
+
+  h1 {
+    margin: 0;
+    font-size: 2rem;
+    letter-spacing: 0.04em;
+  }
+
+  p {
+    margin: 0.5rem 0 0;
+    opacity: 0.75;
+  }
+}
+
+.match-setup__slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(9rem, 1fr));
+  gap: 1rem;
+  width: 100%;
+}
+
+.match-slot {
+  display: grid;
+  gap: 0.4rem;
+  justify-items: center;
+  padding: 1.25rem 1rem;
+  border: 1px solid var(--role-accent-dark, #2a2f3a);
+  border-radius: 0.5rem;
+  background: #171a22;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--role-accent, #5fb0ff);
+    background: color-mix(in srgb, var(--role-accent-dark, #1d4a6b) 35%, #171a22);
+  }
+
+  &--attack {
+    --role-accent: #ffe08c;
+    --role-accent-dark: #8a6a2a;
+  }
+
+  &--defense {
+    --role-accent: #5fb0ff;
+    --role-accent-dark: #1d4a6b;
+  }
+}
+
+.match-slot__icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  object-fit: contain;
+}
+
+.match-slot__role {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--role-accent, #e8e6e1);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.match-slot__kind {
+  padding: 0.15rem 0.7rem;
+  border-radius: 1rem;
+  border: 1px solid #2a2f3a;
+  font-weight: 600;
+
+  &[data-kind='human'] {
+    color: #9de89f;
+    border-color: #2a4a2f;
+  }
+
+  &[data-kind='ai'] {
+    color: #ffe08c;
+    border-color: #4a3f2a;
+  }
+}
+
+.match-setup__mode {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}

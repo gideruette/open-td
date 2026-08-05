@@ -1,0 +1,27 @@
+<section class="match-setup">
+  <header class="match-setup__header">
+    <h1>Open TD</h1>
+    <p>Configurez la partie : qui joue Attaque, qui joue Défense.</p>
+  </header>
+
+  <div class="match-setup__slots">
+    <button type="button" class="match-slot match-slot--attack" (click)="toggleSlot('attack')">
+      <img class="match-slot__icon" src="assets/sprites/swords-attack.svg" alt="" />
+      <span class="match-slot__role">{{ roleLabel.attack }}</span>
+      <span class="match-slot__kind" [attr.data-kind]="slots().attack">
+        {{ slots().attack === 'ai' ? 'IA' : 'Humain' }}
+      </span>
+    </button>
+    <button type="button" class="match-slot match-slot--defense" (click)="toggleSlot('defense')">
+      <img class="match-slot__icon" src="assets/sprites/shield-defense.svg" alt="" />
+      <span class="match-slot__role">{{ roleLabel.defense }}</span>
+      <span class="match-slot__kind" [attr.data-kind]="slots().defense">
+        {{ slots().defense === 'ai' ? 'IA' : 'Humain' }}
+      </span>
+    </button>
+  </div>
+
+  <p class="match-setup__mode">Mode : {{ modeLabel() }}</p>
+
+  <otd-button variant="success" (clicked)="start()">Commencer</otd-button>
+</section>

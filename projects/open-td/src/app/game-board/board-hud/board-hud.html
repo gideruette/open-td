@@ -1,6 +1,7 @@
 <div class="board-hud" role="toolbar" aria-label="Commandes de jeu">
   @if (phase() === 'attack' && !drawingPath() && !trialRunning()) {
     <div class="board-hud__lane">
+      <p class="board-hud__mover">Attaque — {{ currentMoverLabel() }}</p>
       <div class="board-hud__lane-tabs" role="tablist" aria-label="Voies">
         @for (entry of lanes(); track entry.path.id; let i = $index) {
           <button
@@ -8,7 +9,7 @@
             class="board-hud__lane-tab"
             [class.board-hud__lane-tab--active]="activeLaneIndex() === i"
             [attr.aria-selected]="activeLaneIndex() === i"
-            [disabled]="trialRunning()"
+            [disabled]="locked()"
             (click)="lanesService.selectLane(i)"
           >
             {{ laneDisplayLabel(entry, i) }}
@@ -17,7 +18,7 @@
         <button
           type="button"
           class="board-hud__lane-action board-hud__lane-action--add"
-          [disabled]="trialRunning()"
+          [disabled]="locked()"
           aria-label="Ajouter un chemin"
           title="Ajouter un chemin"
           (click)="lanesService.startTracing()"
@@ -28,7 +29,7 @@
           <button
             type="button"
             class="board-hud__lane-action board-hud__lane-action--remove"
-            [disabled]="trialRunning()"
+            [disabled]="locked()"
             aria-label="Supprimer ce chemin"
             title="Supprimer ce chemin"
             (click)="lanesService.removeActiveLane()"
@@ -37,8 +38,39 @@
           </button>
         }
       </div>
+      @if (attackScore(); as score) {
+        <p class="board-hud__debug-score">
+          Debug — score estimé : {{ score }} PV château
+          @if (score <= 0) {
+            (château détruit)
+          } @else {
+            (attaque repoussée)
+          }
+        </p>
+      }
+      @if (hasEmptyLane()) {
+        <p class="board-hud__message">Chaque voie doit être empruntée par au moins un monstre avant de lancer l'attaque.</p>
+      }
       @if (activeLane()) {
         <otd-lanes-panel />
+      }
+    </div>
+  }
+
+  @if (phase() === 'defense' && !trialRunning()) {
+    <div class="board-hud__lane">
+      <p class="board-hud__mover">Défense — {{ currentMoverLabel() }}</p>
+      @if (defenseScore(); as score) {
+        <p class="board-hud__debug-score">
+          Debug — score estimé : {{ score }} PV château
+          @if (score <= 0) {
+            (château détruit)
+          } @else if (score >= chateauMaxHp()) {
+            (défense tenue, aucun dégât)
+          } @else {
+            (château endommagé)
+          }
+        </p>
       }
     </div>
   }
@@ -52,7 +84,7 @@
             class="board-hud__tool board-hud__tool--tower"
             [class.board-hud__tool--active]="selectedTypeId() === type.id"
             [class.board-hud__tool--warn]="!isAffordable(type)"
-            [disabled]="trialRunning() || pickingHasTower()"
+            [disabled]="locked() || pickingHasTower()"
             [attr.aria-pressed]="selectedTypeId() === type.id"
             [attr.aria-label]="type.name + ' (' + type.cost + ')'"
             [title]="type.name + ' · ' + type.cost"
@@ -78,7 +110,7 @@
   @if (pickingActive()) {
     <div class="board-hud__launch">
       @if (pickingHasTower()) {
-        <otd-button variant="danger" [disabled]="trialRunning()" (clicked)="defenseService.deleteSelected()">
+        <otd-button variant="danger" [disabled]="locked()" (clicked)="defenseService.deleteSelected()">
           Supprimer
         </otd-button>
       } @else {

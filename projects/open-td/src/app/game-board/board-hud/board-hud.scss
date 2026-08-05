@@ -35,6 +35,25 @@
   min-width: 0;
 }
 
+.board-hud__mover {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.board-hud__debug-score {
+  margin: 0;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.3rem;
+  background: #2a2214;
+  color: #e8c97a;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .board-hud__lane-tabs {
   display: flex;
   flex-wrap: nowrap;

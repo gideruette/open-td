@@ -27,14 +27,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Build shared
-        run: npx ng build shared
-
-      - name: Build engine
-        run: npx ng build engine
-
-      - name: Build open-td
-        run: npx ng build open-td --base-href /open-td/
+      - name: Build
+        run: npm run build -- --base-href /open-td/
 
       - name: Add SPA fallback
         run: cp dist/open-td/browser/index.html dist/open-td/browser/404.html

@@ -1,0 +1,13 @@
+<div class="board-match-result">
+  <div class="board-match-result__panel">
+    <h2 class="board-match-result__title">Partie terminée</h2>
+    <p class="board-match-result__detail">
+      L'IA ({{ failedLabel() }}) n'a pas trouvé de solution à temps.
+    </p>
+    <p class="board-match-result__winner">{{ winnerLabel() }} remporte la partie !</p>
+    <div class="board-match-result__actions">
+      <otd-button variant="info" (clicked)="inspect.emit()">Inspecter la carte</otd-button>
+      <otd-button variant="success" (clicked)="restart.emit()">Nouvelle partie</otd-button>
+    </div>
+  </div>
+</div>

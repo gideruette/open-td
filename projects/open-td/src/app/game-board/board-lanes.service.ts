@@ -1,7 +1,18 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { cellsBetween, hasUniqueCell, isBorderCell, isChateauCell, isSpawnCell, isValidPathStep } from 'engine';
+import {
+  evolveAttackWave,
+  cellsBetween,
+  hasUniqueCell,
+  isBorderCell,
+  isChateauCell,
+  isSpawnCell,
+  isValidPathStep,
+  pathCellsCost,
+  phaseScore,
+  playAttackPhase,
+} from 'engine';
 import { findMonsterType } from 'shared';
-import type { GridCoord, MapPath, MapSpawn, Wave } from 'shared';
+import type { GameMap, GridCoord, MapPath, MapSpawn, Wave } from 'shared';
 import { BoardBudgetService } from './board-budget.service';
 import { BoardEngineService } from './board-engine.service';
 import { BoardMessageService } from './board-message.service';
@@ -46,6 +57,26 @@ export class BoardLanesService {
     return index === undefined ? undefined : this.lanesState()[index];
   });
   readonly isDrawingPath = computed(() => this.drawingPathState() !== undefined);
+
+  /**
+   * Debug : score (vie du château, potentiellement négative) que donnerait la vague en cours de
+   * composition contre la forteresse figée, calculé à l'avance via `phaseScore` — sans lancer
+   * l'épreuve. `undefined` tant qu'aucun monstre n'est mis en file.
+   */
+  readonly attackScore = computed(() => {
+    const wave = this.toWave(this.lanesState());
+    if (wave.lanes.every((lane) => lane.units.length === 0)) {
+      return undefined;
+    }
+    return phaseScore(
+      this.gameState.towers(),
+      wave,
+      this.gameState.chateauMaxHp(),
+      undefined,
+      undefined,
+      'attack',
+    );
+  });
 
   /**
    * Démarre le tracé libre d'une nouvelle voie : le prochain clic doit tomber sur un spawn
@@ -108,7 +139,9 @@ export class BoardLanesService {
       const remaining = this.lanesState().length;
       this.activeLaneIndexState.set(remaining === 0 ? undefined : Math.min(index, remaining - 1));
     } else if ((this.activeLaneIndexState() ?? -1) > index) {
-      this.activeLaneIndexState.update((current) => (current === undefined ? undefined : current - 1));
+      this.activeLaneIndexState.update((current) =>
+        current === undefined ? undefined : current - 1,
+      );
     }
     this.gameState.refresh();
     this.refreshAttackBudget();
@@ -230,13 +263,12 @@ export class BoardLanesService {
     this.refreshAttackBudget();
   }
 
-  /** Abandonne les modifications en cours et revient au plan d'attaque sauvegardé. */
+  /** Supprime toutes les voies en cours de composition (chemins et monstres). */
   resetAttackPlan(): void {
     if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
       return;
     }
-    this.lanesState.set(this.loadAttackPlan());
-    this.activeLaneIndexState.set(undefined);
+    this.clearLanes();
     this.messages.set(undefined);
     this.refreshAttackBudget();
   }
@@ -289,7 +321,11 @@ export class BoardLanesService {
         return;
       }
       if (isBorderCell(map, coord) && !isChateauCell(map, coord)) {
-        const spawn: MapSpawn = { id: `spawn-${this.customSpawnSequence++}`, x: coord.x, y: coord.y };
+        const spawn: MapSpawn = {
+          id: `spawn-${this.customSpawnSequence++}`,
+          x: coord.x,
+          y: coord.y,
+        };
         this.gameState.engine.addSpawn(spawn);
         this.gameState.refresh();
         this.drawingPathState.set([coord]);
@@ -336,6 +372,14 @@ export class BoardLanesService {
         id: `custom-${this.customLaneSequence++}`,
         nodes: nextPath.map((p) => [p.x, p.y]),
       };
+      // Les cases de chemin sont payantes, dédupliquées avec les voies déjà composées
+      // (CONCEPTION.md §5.3) : seules les cases nouvelles pour cette voie sont comptées.
+      const addedCellsCost =
+        pathCellsCost([...existingPaths, newPath]) - pathCellsCost(existingPaths);
+      if (addedCellsCost > this.budget.attack().remaining) {
+        this.messages.set('Chemin trop coûteux : budget d’attaque restant insuffisant pour ces cases.');
+        return;
+      }
       const newLane: LaneDraft = { path: newPath, units: [] };
       this.gameState.engine.addPath(newLane.path);
       const insertAt = this.lanesState().length;
@@ -349,6 +393,91 @@ export class BoardLanesService {
       return;
     }
     this.drawingPathState.set(nextPath);
+  }
+
+  /**
+   * Debug : vide les voies en cours de composition et les remplace par la meilleure vague trouvée
+   * par l'IA Attaque via l'algorithme génétique (`evolveAttackWave` dans `engine`) — sert à
+   * tester l'IA sans composer à la main.
+   */
+  addRandomLane(): void {
+    if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
+      return;
+    }
+    this.clearLanes();
+
+    const map = this.gameState.map();
+    if (!map) {
+      this.refreshAttackBudget();
+      return;
+    }
+
+    const wave = evolveAttackWave(
+      map,
+      this.gameState.towers(),
+      this.gameState.engine.getAttackBudget(),
+      this.gameState.chateauMaxHp(),
+    );
+    this.materializeWave(map, wave);
+  }
+
+  /**
+   * Fait jouer l'ordinateur la phase Attaque à la place du joueur (case IA du système de slots) :
+   * vide les voies en cours et les remplace par la vague trouvée par `playAttackPhase` (point
+   * d'entrée IA officiel, algorithme génétique), avec `maxTime` ms de recherche.
+   */
+  playAiAttackTurn(maxTime: number): void {
+    this.clearLanes();
+
+    const map = this.gameState.map();
+    if (!map) {
+      this.refreshAttackBudget();
+      return;
+    }
+
+    const wave = playAttackPhase({
+      map,
+      towers: this.gameState.towers(),
+      attackBudget: this.gameState.engine.getAttackBudget(),
+      chateauMaxHp: this.gameState.chateauMaxHp(),
+      maxTime,
+    }) ?? { lanes: [] };
+    this.materializeWave(map, wave);
+  }
+
+  /** Vide les voies en cours de composition (chemins retirés de la carte, budget non recalculé). */
+  private clearLanes(): void {
+    for (const lane of this.lanesState()) {
+      this.gameState.engine.removePath(lane.path.id);
+    }
+    this.lanesState.set([]);
+    this.activeLaneIndexState.set(undefined);
+    this.gameState.refresh();
+  }
+
+  /** Ajoute les voies de `wave` à la carte (spawns manquants, chemins) et les charge en composition. */
+  private materializeWave(map: GameMap, wave: Wave): void {
+    for (const lane of wave.lanes) {
+      const [spawnX, spawnY] = lane.path.nodes[0];
+      if (!isSpawnCell(map, { x: spawnX, y: spawnY })) {
+        this.gameState.engine.addSpawn({
+          id: `spawn-${this.customSpawnSequence++}`,
+          x: spawnX,
+          y: spawnY,
+        });
+      }
+      this.gameState.engine.addPath(lane.path);
+    }
+    this.lanesState.set(
+      wave.lanes.map((lane) => ({
+        path: lane.path,
+        units: lane.units.map((unit) => ({ ...unit })),
+      })),
+    );
+    this.activeLaneIndexState.set(wave.lanes.length > 0 ? 0 : undefined);
+    this.messages.set(undefined);
+    this.gameState.refresh();
+    this.refreshAttackBudget();
   }
 
   /** Recalcule le budget d'attaque restant (dépend de la composition des voies en cours). */

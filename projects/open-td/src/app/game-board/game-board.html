@@ -1,5 +1,24 @@
 <section class="board" [class.board--attack]="phase() === 'attack'">
   <div class="board__stage">
+    @if (matchOutcome(); as outcome) {
+      @if (!inspectingMap()) {
+        <otd-board-match-result
+          [outcome]="outcome"
+          (restart)="restart.emit()"
+          (inspect)="onInspectMap()"
+        />
+      } @else {
+        <button type="button" class="board__resume-result" (click)="onResumeMatchResult()">
+          Revenir à l'écran de fin de partie
+        </button>
+      }
+    }
+    @if (aiThinking()) {
+      <div class="board__ai-loader" aria-live="polite">
+        <span class="board__ai-spinner"></span>
+        L'IA réfléchit...
+      </div>
+    }
     <otd-board-message />
 
     <div class="board__map">

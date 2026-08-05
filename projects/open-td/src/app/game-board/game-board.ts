@@ -9,6 +9,7 @@ import {
   effect,
   inject,
   input,
+  output,
   signal,
   viewChild,
 } from '@angular/core';
@@ -28,13 +29,15 @@ import {
 import type { GameMap, GridCoord, MapBiomeColors, TowerInstance, TowerType, Wave } from 'shared';
 import { Tooltip, type TooltipStat } from '../ui/tooltip/tooltip';
 import { BoardBudgetService } from './board-budget.service';
-import type { MonsterView } from './board-types';
+import type { MatchSlots, MonsterView } from './board-types';
 import { BoardDefenseService } from './board-defense.service';
 import { BoardEngineService } from './board-engine.service';
 import { formatMonsterStats, formatTowerStats } from './board-format';
 import { BoardHud } from './board-hud/board-hud';
 import { BoardLanesService } from './board-lanes.service';
 import { BoardLaunchService } from './board-launch.service';
+import { AI_THINK_TIME_MS, BoardMatchService } from './board-match.service';
+import { BoardMatchResult } from './board-match-result/board-match-result';
 import { BoardMessage } from './board-message/board-message';
 import { BoardMessageService } from './board-message.service';
 import { BoardStatus } from './board-status/board-status';
@@ -208,11 +211,12 @@ interface HitEffectView {
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [BoardHud, BoardMessage, BoardStatus, Tooltip],
+  imports: [BoardHud, BoardMatchResult, BoardMessage, BoardStatus, Tooltip],
   providers: [
     BoardBudgetService,
     BoardEngineService,
     BoardLaunchService,
+    BoardMatchService,
     BoardMessageService,
     BoardTrialService,
     BoardDefenseService,
@@ -224,6 +228,8 @@ interface HitEffectView {
 })
 export class GameBoard implements OnInit {
   readonly mapId = input.required<string>();
+  readonly slots = input.required<MatchSlots>();
+  readonly restart = output<void>();
 
   private readonly canvasRef = viewChild<ElementRef<HTMLCanvasElement>>('board');
   private readonly viewportRef = viewChild<ElementRef<HTMLElement>>('viewport');
@@ -276,6 +282,14 @@ export class GameBoard implements OnInit {
   private readonly budget = inject(BoardBudgetService);
   private readonly launchService = inject(BoardLaunchService);
   private readonly messages = inject(BoardMessageService);
+  private readonly matchService = inject(BoardMatchService);
+
+  /** Issue de la partie (vainqueur déclaré) une fois qu'une IA a échoué à trouver une solution à temps. */
+  protected readonly matchOutcome = this.matchService.outcome;
+  /** Vrai pendant que l'IA calcule son coup : affiche un loader plutôt qu'un changement de phase brutal. */
+  protected readonly aiThinking = this.matchService.isThinking;
+  /** Vrai quand l'écran de fin de partie est replié pour laisser inspecter la carte avant de rejouer. */
+  protected readonly inspectingMap = signal(false);
 
   protected readonly map = this.gameState.map;
   protected readonly towers = this.gameState.towers;
@@ -331,13 +345,14 @@ export class GameBoard implements OnInit {
     return this.hoverCell() ? 'pointer' : 'grab';
   });
   protected readonly canLaunch = computed(() => {
-    if (this.isTrialRunning()) {
+    if (this.isTrialRunning() || this.matchService.isOver() || this.matchService.isThinking()) {
       return false;
     }
     if (this.phase() === 'defense') {
       return !!this.vagueCourante();
     }
-    return !this.isDrawingPath() && this.lanes().length > 0;
+    const lanes = this.lanes();
+    return !this.isDrawingPath() && lanes.length > 0 && lanes.every((lane) => lane.units.length > 0);
   });
 
   constructor() {
@@ -412,6 +427,16 @@ export class GameBoard implements OnInit {
     this.startAttack();
   }
 
+  /** Replie l'écran de fin de partie pour laisser inspecter la carte avant de relancer. */
+  protected onInspectMap(): void {
+    this.inspectingMap.set(true);
+  }
+
+  /** Ramène l'écran de fin de partie au premier plan après une inspection de la carte. */
+  protected onResumeMatchResult(): void {
+    this.inspectingMap.set(false);
+  }
+
   // ---- Caméra (pan / zoom) -----------------------------------------------
 
   protected onViewPointerDown(event: PointerEvent): void {
@@ -466,13 +491,11 @@ export class GameBoard implements OnInit {
     const dy = event.clientY - session.startY;
     if (!session.dragged && Math.hypot(dx, dy) >= PAN_DRAG_THRESHOLD_PX) {
       session.dragged = true;
-      if (this.boardTool() === 'pan') {
-        this.isPanning.set(true);
-        this.hoverCell.set(undefined);
-        this.boardTooltip.set(undefined);
-      }
+      this.isPanning.set(true);
+      this.hoverCell.set(undefined);
+      this.boardTooltip.set(undefined);
     }
-    if (session.dragged && this.boardTool() === 'pan') {
+    if (session.dragged) {
       event.preventDefault();
       this.setPan(session.originX + dx, session.originY + dy);
       return;
@@ -512,7 +535,7 @@ export class GameBoard implements OnInit {
       return;
     }
 
-    if (this.activePointers.size === 1 && this.boardTool() === 'pan') {
+    if (this.activePointers.size === 1) {
       const remaining = this.activePointers.entries().next().value;
       if (!remaining) {
         this.isPanning.set(false);
@@ -607,6 +630,9 @@ export class GameBoard implements OnInit {
    * Tap court : sélectionne une case (défense) ou une voie (attaque), ou avance un tracé en cours.
    */
   protected onCanvasTap(event: PointerEvent): void {
+    if (this.matchService.isOver() || this.matchService.isThinking()) {
+      return;
+    }
     const coord = this.toGridCoord(event);
     if (!coord) {
       // En dehors de la grille : annule la case choisie en phase Défense.
@@ -791,18 +817,27 @@ export class GameBoard implements OnInit {
 
   private concludeTrial(trial: DefenseSimulation): void {
     const outcome = trial.getOutcome();
+    // Capturé avant tout resolve*Success() : `phase()` change dès la résolution d'un succès.
+    const phaseJustPlayed = this.phase() as 'attack' | 'defense';
+    const moverWasAi = this.matchService.currentMoverKind(phaseJustPlayed) === 'ai';
 
-    if (this.phase() === 'defense') {
+    if (phaseJustPlayed === 'defense') {
       if (outcome === 'success') {
         this.gameState.engine.resolveDefenseSuccess();
         this.gameState.refresh();
         this.lanesService.applySavedPlan((lanes) => (lanes.length > 0 ? 0 : undefined));
         this.defenseService.clearSelection();
         this.lanesService.setPanTool();
-        this.messages.set('Défense réussie ! La forteresse est figée : phase Attaque.');
+        this.messages.set(
+          `Défense réussie, château intact ! La forteresse est figée : ${this.nextMoverPhrase('attack')}.`,
+        );
         this.resetTrialDisplay();
+        this.maybeStartAiTurn();
+      } else if (moverWasAi) {
+        this.declareAiFailure('defense');
+        this.trialService.setMonsters([]);
       } else {
-        this.messages.set('Défense échouée — le château est tombé. Ajustez vos tours et réessayez.');
+        this.messages.set('Défense échouée — le château a encaissé des dégâts. Ajustez vos tours et réessayez.');
         this.trialService.setMonsters([]);
       }
     } else {
@@ -818,11 +853,17 @@ export class GameBoard implements OnInit {
         this.defenseService.clearSelection();
         this.lanesService.setPanTool();
         this.messages.set(
-          `Vague victorieuse (${trial.getBreachCount()} brèche(s)) ! Palier ${this.palier()} — retour en Défense.`,
+          `Château détruit (${trial.getBreachCount()} brèche(s)) ! Palier ${this.palier()} — ${this.nextMoverPhrase('defense')}.`,
         );
         this.resetTrialDisplay();
+        this.maybeStartAiTurn();
+      } else if (moverWasAi) {
+        this.declareAiFailure('attack');
+        this.trialService.setMonsters([]);
       } else {
-        this.messages.set('Vague anéantie, aucune brèche. Recomposez et réessayez.');
+        this.messages.set(
+          `Château non détruit (${trial.getBreachCount()} brèche(s)). Recomposez et réessayez.`,
+        );
         this.trialService.setMonsters([]);
       }
     }
@@ -831,6 +872,61 @@ export class GameBoard implements OnInit {
 
   private resetTrialDisplay(): void {
     this.trialService.reset();
+  }
+
+  // ---- Tours joués par l'IA (système de slots) --------------------------
+
+  /** Déclenche le tour de l'IA si le slot de la phase courante lui est assigné. */
+  private maybeStartAiTurn(): void {
+    if (this.matchService.isOver() || this.isTrialRunning()) {
+      return;
+    }
+    if (this.matchService.currentMoverKind(this.phase() as 'attack' | 'defense') !== 'ai') {
+      return;
+    }
+    this.matchService.setThinking(true);
+    // Laisse Angular peindre le loader « L'IA réfléchit... » avant le calcul bloquant.
+    setTimeout(() => this.runAiTurn(), 50);
+  }
+
+  private runAiTurn(): void {
+    const phaseNow = this.phase();
+    if (phaseNow === 'defense') {
+      this.defenseService.playAiDefenseTurn(AI_THINK_TIME_MS);
+      this.matchService.setThinking(false);
+      this.startTrial();
+      return;
+    }
+    this.lanesService.playAiAttackTurn(AI_THINK_TIME_MS);
+    this.matchService.setThinking(false);
+    if (!this.lanes().some((lane) => lane.units.length > 0)) {
+      // L'IA n'a rien pu composer : échec direct, aucune épreuve à lancer.
+      this.declareAiFailure('attack');
+      return;
+    }
+    this.startAttack();
+  }
+
+  /** Formule qui va jouer la phase `nextPhase` à venir — adapte le message selon le slot (IA ou vous). */
+  private nextMoverPhrase(nextPhase: 'attack' | 'defense'): string {
+    const isAi = this.matchService.currentMoverKind(nextPhase) === 'ai';
+    return nextPhase === 'attack'
+      ? isAi
+        ? "l'IA passe à l'attaque"
+        : "à vous d'attaquer"
+      : isAi
+        ? "l'IA passe en défense"
+        : 'à vous de défendre';
+  }
+
+  /** L'IA du rôle `phase` n'a pas trouvé de solution à temps : l'autre rôle (humain) remporte la partie. */
+  private declareAiFailure(phase: 'attack' | 'defense'): void {
+    this.matchService.declareVictory(phase);
+    const winnerLabel = phase === 'attack' ? 'Défense' : 'Attaque';
+    const failedLabel = phase === 'attack' ? 'Attaque' : 'Défense';
+    this.messages.set(
+      `L'IA (${failedLabel}) n'a pas trouvé de solution à temps : ${winnerLabel} remporte la partie !`,
+    );
   }
 
   /** Anime les projectiles en cours (indépendamment des ticks) jusqu'à ce qu'ils s'estompent. */
@@ -987,8 +1083,10 @@ export class GameBoard implements OnInit {
       );
       this.decor.set(generateDecor(map));
       this.gameState.startRun(map, catalogEntry.startingData);
+      this.matchService.configure(this.slots());
       this.lanesService.applySavedPlan(() => undefined);
       this.resetView();
+      this.maybeStartAiTurn();
     } catch {
       this.messages.set('Impossible de charger la carte.');
     }

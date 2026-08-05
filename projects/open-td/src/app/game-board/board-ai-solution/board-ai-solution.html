@@ -1,0 +1,12 @@
+@if (visible()) {
+  <button
+    type="button"
+    class="board-ai-solution"
+    [disabled]="disabled()"
+    [attr.aria-label]="title()"
+    [title]="title()"
+    (click)="onClick()"
+  >
+    🎲
+  </button>
+}

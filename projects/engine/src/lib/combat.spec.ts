@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
 import { hexToWorld } from 'shared';
-import { DefenseSimulation, selectTarget, totalChateauDamage, waveCost } from './combat';
+import { DefenseSimulation, phaseScore, selectTarget, spreadCellCount, totalChateauDamage, waveCost } from './combat';
+import { pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
 const p2: MapPath = { id: 'p2', nodes: [[0, 3], [20, 3]] };
@@ -138,6 +139,15 @@ describe('DefenseSimulation', () => {
     expect(sim.getChateauHp()).toBeLessThanOrEqual(0);
   });
 
+  it('fails as soon as the chateau takes any damage, even if it survives above zero', () => {
+    const sim = new DefenseSimulation([], wave(lane([{ type: 'unit' }])), 100, monsterCatalog, towerCatalog, 1);
+
+    const outcome = sim.runToCompletion();
+
+    expect(outcome).toBe('failure');
+    expect(sim.getChateauHp()).toBe(99);
+  });
+
   it('succeeds when every monster is destroyed before reaching the chateau', () => {
     const towers = [tower({ typeId: 'strong' })];
     const sim = new DefenseSimulation(
@@ -153,6 +163,40 @@ describe('DefenseSimulation', () => {
 
     expect(outcome).toBe('success');
     expect(sim.getChateauHp()).toBe(10);
+  });
+
+  describe('phaseScore', () => {
+    it('is derived from the spread (towers + route cells) once every monster is destroyed, not from the chateau hp', () => {
+      const towers = [tower({ typeId: 'strong' })];
+      const testWave = wave(lane([{ type: 'unit' }, { type: 'unit' }]));
+
+      const score = phaseScore(towers, testWave, 10, monsterCatalog, towerCatalog, 'defense');
+
+      expect(score).not.toBe(10);
+      expect(score).toBeGreaterThan(spreadCellCount(towers, testWave));
+    });
+
+    it('ranks a more spread-out successful defense above a more compact one', () => {
+      // Les tours sont posées hors du tracé (y=5, la voie longe y=0) pour ne pas se confondre
+      // avec une case de route déjà comptée dans l'étalement.
+      const testWave = wave(lane([{ type: 'unit' }, { type: 'unit' }]));
+      const oneTower = [tower({ typeId: 'strong', position: { x: 10, y: 5 } })];
+      const twoTowers = [
+        tower({ typeId: 'strong', position: { x: 10, y: 5 } }),
+        tower({ id: 't2', typeId: 'strong', position: { x: 11, y: 5 } }),
+      ];
+
+      const scoreOneTower = phaseScore(oneTower, testWave, 10, monsterCatalog, towerCatalog, 'defense');
+      const scoreTwoTowers = phaseScore(twoTowers, testWave, 10, monsterCatalog, towerCatalog, 'defense');
+
+      expect(scoreTwoTowers).toBeGreaterThan(scoreOneTower);
+    });
+
+    it('can go negative once the chateau is depleted by more monsters than it has hp for (failure)', () => {
+      const score = phaseScore([], wave(lane([{ type: 'unit' }, { type: 'unit' }])), 1, monsterCatalog, towerCatalog, 'defense');
+
+      expect(score).toBe(-1);
+    });
   });
 
   it('applies splash damage to monsters near the primary target', () => {
@@ -392,13 +436,13 @@ describe('DefenseSimulation', () => {
   });
 
   describe('attack mode', () => {
-    it('succeeds the instant a monster breaches, even if towers remain and other units are still queued', () => {
+    it('succeeds once the chateau is destroyed, even if towers remain and other units are still queued', () => {
       // tower placed far off the path: out of range of every monster, so the wave goes unopposed.
       const towers = [tower({ typeId: 'weak', position: { x: 999, y: 999 } })];
       const sim = new DefenseSimulation(
         towers,
-        wave(lane([{ type: 'unit' }, { type: 'unit' }])),
-        100,
+        wave(lane([{ type: 'unit' }, { type: 'unit' }, { type: 'unit' }])),
+        1,
         monsterCatalog,
         towerCatalog,
         1,
@@ -408,7 +452,29 @@ describe('DefenseSimulation', () => {
       const outcome = sim.runToCompletion();
 
       expect(outcome).toBe('success');
-      expect(sim.getBreachCount()).toBeGreaterThanOrEqual(1);
+      expect(sim.getChateauHp()).toBeLessThanOrEqual(0);
+      // Destroyed by the first breach alone: the two remaining queued units never had to spawn.
+      expect(sim.getBreachCount()).toBe(1);
+    });
+
+    it('does not succeed on a breach that fails to destroy the chateau', () => {
+      // tower placed far off the path: out of range of every monster, so the wave goes unopposed.
+      const towers = [tower({ typeId: 'weak', position: { x: 999, y: 999 } })];
+      const sim = new DefenseSimulation(
+        towers,
+        wave(lane([{ type: 'unit' }])),
+        100,
+        monsterCatalog,
+        towerCatalog,
+        1,
+        'attack',
+      );
+
+      const outcome = sim.runToCompletion();
+
+      expect(outcome).toBe('failure');
+      expect(sim.getBreachCount()).toBe(1);
+      expect(sim.getChateauHp()).toBe(99);
     });
 
     it('fails when the whole wave is destroyed without a single breach', () => {
@@ -561,16 +627,29 @@ describe('totalChateauDamage', () => {
 });
 
 describe('waveCost', () => {
-  it('sums the cost of every unit across all lanes', () => {
+  it('sums the cost of every unit across all lanes, plus the cost of each lane\'s path cells', () => {
     const w = wave(lane([{ type: 'goblin' }, { type: 'goblin' }]), lane([{ type: 'golem' }], p2));
-    expect(waveCost(w, monsterCatalog)).toBe(goblin.cost * 2 + golem.cost);
+    expect(waveCost(w, monsterCatalog)).toBe(
+      goblin.cost * 2 + golem.cost + pathCellsCost([p1, p2]),
+    );
   });
 
   it('ignores unknown unit types instead of throwing', () => {
-    expect(waveCost(wave(lane([{ type: 'ghost' }])), monsterCatalog)).toBe(0);
+    expect(waveCost(wave(lane([{ type: 'ghost' }])), monsterCatalog)).toBe(pathCellsCost([p1]));
   });
 
   it('is zero for an empty composition', () => {
     expect(waveCost(wave(), monsterCatalog)).toBe(0);
+  });
+
+  it('charges the cells of an overlapping path only once, across lanes (CONCEPTION.md §5.3)', () => {
+    const overlapping: MapPath = { id: 'overlapping', nodes: [[0, 0], [20, 0]] };
+    const w = wave(lane([{ type: 'goblin' }], p1), lane([{ type: 'goblin' }], overlapping));
+    expect(waveCost(w, monsterCatalog)).toBe(goblin.cost * 2 + pathCellsCost([p1]));
+  });
+
+  it('accepts a custom cost per path cell', () => {
+    const w = wave(lane([{ type: 'goblin' }]));
+    expect(waveCost(w, monsterCatalog, 5)).toBe(goblin.cost + pathCellsCost([p1], 5));
   });
 });

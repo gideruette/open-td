@@ -127,7 +127,8 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'marais-03',
     name: 'Marais',
-    description: 'Deux spawns opposés (haut et bas) : la pression peut venir des deux côtés à la fois.',
+    description:
+      'Deux spawns opposés (haut et bas) : la pression peut venir des deux côtés à la fois.',
     difficulty: 'modérée',
     biome: 'marais',
     grid: { cols: 24, rows: 18, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },

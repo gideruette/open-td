@@ -1,0 +1,48 @@
+:host {
+  position: absolute;
+  inset: 0;
+  // Doit rester au-dessus du HUD inférieur (z-index: 25, cf. board-hud.scss), sinon le HUD masque la popup.
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 10, 16, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.board-match-result__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem 2.5rem;
+  border: 1px solid var(--phase-panel-border, #1d4a6b);
+  border-radius: 0.75rem;
+  background: var(--phase-panel-bg, rgba(20, 34, 41, 0.96));
+  box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+.board-match-result__title {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.board-match-result__detail {
+  margin: 0;
+  color: #ff8f7a;
+  font-size: 0.9rem;
+}
+
+.board-match-result__winner {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7be07a;
+}
+
+.board-match-result__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}

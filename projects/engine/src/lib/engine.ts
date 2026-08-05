@@ -31,7 +31,6 @@ export class GameEngine {
   private towers: TowerInstance[] = [];
   private towerSequence = 0;
   private savedAttackPlan: Wave = { lanes: [] };
-  private savedDefenseTowers: TowerInstance[] = [];
 
   getStatus(): string {
     return `Open TD engine ready (${this.phaseState})`;
@@ -57,7 +56,6 @@ export class GameEngine {
         units: lane.units.map((unit) => ({ ...unit })),
       })),
     };
-    this.savedDefenseTowers = [];
   }
 
   getMap(): GameMap | undefined {
@@ -240,15 +238,12 @@ export class GameEngine {
     this.phaseState = 'attack';
   }
 
-  /**
-   * Abandonne les modifications de la phase Défense en cours (poses, suppressions, déplacements) pour
-   * revenir à la forteresse telle qu'elle était au début de cette phase.
-   */
+  /** Supprime toutes les tours posées en phase Défense (retour à une forteresse vide). */
   resetDefenseSession(): void {
     if (this.phaseState !== 'defense') {
       return;
     }
-    this.towers = this.savedDefenseTowers.map((tower) => ({ ...tower }));
+    this.towers = [];
   }
 
   /** Lance une épreuve d'attaque : la vague composée par le joueur contre la forteresse figée. */
@@ -276,6 +271,5 @@ export class GameEngine {
     this.defenseBudget += this.budgetGrowth.defense;
     this.attackBudget += this.budgetGrowth.attack;
     this.phaseState = 'defense';
-    this.savedDefenseTowers = this.towers.map((tower) => ({ ...tower }));
   }
 }

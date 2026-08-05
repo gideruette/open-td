@@ -1,0 +1,28 @@
+:host {
+  display: contents;
+}
+
+.board-ai-solution {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+  border: 1px solid #5a4a2a;
+  border-radius: 999px;
+  background: #2a2214;
+  color: #e8c97a;
+  font-size: 1rem;
+  cursor: pointer;
+  pointer-events: auto;
+
+  &:hover:not(:disabled) {
+    background: #3a2f1a;
+  }
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}

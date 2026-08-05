@@ -1,6 +1,6 @@
 import type { GameMap, GridCoord, MapPath, MapSpawn, TowerInstance } from 'shared';
-import { hexDistance, hexLinedraw, hexToWorld } from 'shared';
-import { isWithinGrid } from './fortress';
+import { hexDistance, hexLinedraw, hexNeighbors, hexToWorld } from 'shared';
+import { findTowerAt, isWithinGrid } from './fortress';
 
 function segmentLength(a: GridCoord, b: GridCoord): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -76,19 +76,36 @@ export function addMapSpawn(map: GameMap, spawn: MapSpawn): GameMap {
   return { ...map, spawns: [...map.spawns, spawn] };
 }
 
-/**
- * Vrai si au moins une case de `cells` n'appartient à aucun des `paths` donnés : une voie
- * dont toutes les cases chevauchent déjà une autre voie n'apporte rien de nouveau
- * (CONCEPTION.md §5.3).
- */
-export function hasUniqueCell(cells: readonly GridCoord[], paths: readonly MapPath[]): boolean {
+/** Union des cases traversées par `paths`, chacune comptée une seule fois même si plusieurs chemins s'y superposent. */
+export function coveredCells(paths: readonly MapPath[]): Set<string> {
   const covered = new Set<string>();
   for (const path of paths) {
     for (const cell of expandPathCells(path)) {
       covered.add(`${cell.x},${cell.y}`);
     }
   }
+  return covered;
+}
+
+/**
+ * Vrai si au moins une case de `cells` n'appartient à aucun des `paths` donnés : une voie
+ * dont toutes les cases chevauchent déjà une autre voie n'apporte rien de nouveau
+ * (CONCEPTION.md §5.3).
+ */
+export function hasUniqueCell(cells: readonly GridCoord[], paths: readonly MapPath[]): boolean {
+  const covered = coveredCells(paths);
   return cells.some((cell) => !covered.has(`${cell.x},${cell.y}`));
+}
+
+/** Coût en budget d'attaque d'une case de chemin (CONCEPTION.md §5.3). */
+export const PATH_CELL_COST = 1;
+
+/**
+ * Coût total des cases occupées par `paths` : chaque case n'est facturée qu'une fois, même
+ * si plusieurs chemins s'y superposent (CONCEPTION.md §5.3).
+ */
+export function pathCellsCost(paths: readonly MapPath[], costPerCell: number = PATH_CELL_COST): number {
+  return coveredCells(paths).size * costPerCell;
 }
 
 /** Vrai si `spawn` est le point de départ d'au moins un chemin de `paths` (route reliée). */
@@ -156,4 +173,87 @@ export function isValidPathStep(
     return false;
   }
   return !towers.some((tower) => tower.position.x === to.x && tower.position.y === to.y);
+}
+
+function cellKey(coord: GridCoord): string {
+  return `${coord.x},${coord.y}`;
+}
+
+/**
+ * Plus court chemin (BFS, cases hex de coût uniforme) entre deux cases de la grille, en évitant
+ * les cases occupées par une tour. Cases traversées, `from` exclue et `to` incluse (même
+ * convention que `hexLinedraw`) ; `undefined` si `to` est inatteignable (encerclée de tours).
+ */
+export function shortestPath(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  from: GridCoord,
+  to: GridCoord,
+): GridCoord[] | undefined {
+  if (cellKey(from) === cellKey(to)) {
+    return [];
+  }
+
+  const visited = new Set<string>([cellKey(from)]);
+  const previous = new Map<string, GridCoord>();
+  const queue: GridCoord[] = [from];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const neighbor of hexNeighbors(current)) {
+      if (!isWithinGrid(map, neighbor) || findTowerAt(towers, neighbor)) {
+        continue;
+      }
+      const neighborKey = cellKey(neighbor);
+      if (visited.has(neighborKey)) {
+        continue;
+      }
+      visited.add(neighborKey);
+      previous.set(neighborKey, current);
+      if (neighborKey === cellKey(to)) {
+        const path: GridCoord[] = [neighbor];
+        let step = current;
+        while (cellKey(step) !== cellKey(from)) {
+          path.unshift(step);
+          step = previous.get(cellKey(step))!;
+        }
+        return path;
+      }
+      queue.push(neighbor);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Route reliant `from` à `to` en passant par chacun des `waypoints` donnés, dans l'ordre, chaque
+ * tronçon via `shortestPath` (donc en évitant les tours). Un jalon inatteignable depuis le
+ * précédent est simplement ignoré, plutôt que de faire échouer toute la route — utile pour
+ * composer des détours ou recombiner des chemins à partir de points tirés au hasard (IA
+ * d'attaque). `undefined` seulement si `to` reste inatteignable depuis le dernier jalon valide
+ * (même sémantique que `shortestPath`).
+ */
+export function routeThroughWaypoints(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  from: GridCoord,
+  waypoints: readonly GridCoord[],
+  to: GridCoord,
+): GridCoord[] | undefined {
+  const cells: GridCoord[] = [];
+  let cursor = from;
+  for (const waypoint of waypoints) {
+    const segment = shortestPath(map, towers, cursor, waypoint);
+    if (!segment) {
+      continue;
+    }
+    cells.push(...segment);
+    cursor = waypoint;
+  }
+  const finalSegment = shortestPath(map, towers, cursor, to);
+  if (!finalSegment) {
+    return undefined;
+  }
+  cells.push(...finalSegment);
+  return cells;
 }
