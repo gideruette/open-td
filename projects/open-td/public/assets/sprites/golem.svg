@@ -1,7 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect x="10" y="10" width="44" height="44" rx="6" fill="#8a8a86" stroke="#5c5c58" stroke-width="2"/>
-  <line x1="18" y1="24" x2="30" y2="20" stroke="#5c5c58" stroke-width="2"/>
-  <line x1="40" y1="40" x2="50" y2="34" stroke="#5c5c58" stroke-width="2"/>
-  <circle cx="24" cy="30" r="4" fill="#d7622b"/>
-  <circle cx="40" cy="30" r="4" fill="#d7622b"/>
+  <defs>
+    <linearGradient id="stone" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#aeb0ac"/>
+      <stop offset="55%" stop-color="#8a8a86"/>
+      <stop offset="100%" stop-color="#5c5c58"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="32%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffb066"/>
+      <stop offset="100%" stop-color="#d7622b"/>
+    </radialGradient>
+  </defs>
+  <rect x="8" y="8" width="48" height="48" rx="8" fill="url(#stone)" stroke="#4a4a46" stroke-width="2.2"/>
+  <rect x="8" y="8" width="48" height="48" rx="8" fill="url(#gloss)"/>
+  <path d="M14 22 L26 16 L24 26 L34 22" stroke="#5c5c58" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.8"/>
+  <path d="M38 40 L50 34 L46 46 L54 42" stroke="#5c5c58" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.8"/>
+  <path d="M14 22 L26 16 L24 26 L34 22" stroke="#ffb066" stroke-width="0.8" fill="none" opacity="0.7"/>
+  <ellipse cx="16" cy="46" rx="5" ry="3.5" fill="#5c7a3a" opacity="0.7"/>
+  <ellipse cx="48" cy="16" rx="4" ry="3" fill="#5c7a3a" opacity="0.6"/>
+  <circle cx="24" cy="30" r="5" fill="url(#glow)"/>
+  <circle cx="40" cy="30" r="5" fill="url(#glow)"/>
+  <circle cx="24" cy="30" r="2" fill="#fff3d6"/>
+  <circle cx="40" cy="30" r="2" fill="#fff3d6"/>
 </svg>

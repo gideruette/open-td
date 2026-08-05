@@ -20,14 +20,6 @@
     --phase-panel-bg: rgba(42, 36, 16, 0.94);
     --phase-panel-border: #8a6a2a;
   }
-
-  &--pan .board__canvas-wrap {
-    cursor: grab;
-  }
-
-  &--edit .board__canvas-wrap {
-    cursor: crosshair;
-  }
 }
 
 .board__stage {

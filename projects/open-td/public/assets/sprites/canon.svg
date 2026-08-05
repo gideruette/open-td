@@ -1,7 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="28" fill="#20242e"/>
-  <circle cx="20" cy="32" r="10" fill="#5c6672"/>
-  <rect x="14" y="24" width="30" height="16" rx="4" fill="#7d8a99"/>
-  <circle cx="44" cy="32" r="9" fill="#3a3f47"/>
-  <circle cx="44" cy="32" r="5" fill="#14161a"/>
+  <defs>
+    <linearGradient id="metal" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#9aa6b3"/>
+      <stop offset="50%" stop-color="#5c6672"/>
+      <stop offset="100%" stop-color="#30363e"/>
+    </linearGradient>
+    <linearGradient id="carriage" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9c8064"/>
+      <stop offset="100%" stop-color="#5c4632"/>
+    </linearGradient>
+  </defs>
+  <circle cx="20" cy="31" r="10" fill="url(#carriage)" stroke="#3a2c1e" stroke-width="1.5"/>
+  <line x1="20" y1="23" x2="20" y2="39" stroke="#3a2c1e" stroke-width="1.2"/>
+  <line x1="12" y1="31" x2="28" y2="31" stroke="#3a2c1e" stroke-width="1.2"/>
+  <rect x="14" y="23" width="30" height="16" rx="4" fill="url(#carriage)" stroke="#3a2c1e" stroke-width="1.5"/>
+  <circle cx="45" cy="31" r="10" fill="url(#metal)" stroke="#20242c" stroke-width="1.5"/>
+  <circle cx="45" cy="31" r="5.5" fill="#14161a"/>
+  <circle cx="43" cy="29" r="1.6" fill="#c7d0da" opacity="0.7"/>
 </svg>

@@ -15,6 +15,7 @@ import {
 import type { DefenseOutcome, DefenseSimulation } from 'engine';
 import {
   GameEngine,
+  canOccupyCell,
   canPlaceTower,
   cellsBetween,
   expandPathCells,
@@ -22,9 +23,11 @@ import {
   isChateauCell,
   isSpawnCell,
   isValidPathStep,
+  selectTarget,
 } from 'engine';
 import {
   BIOME_COLORS,
+  TOWER_TYPES,
   findMapCatalogEntry,
   findMonsterType,
   findTowerType,
@@ -40,6 +43,7 @@ import type {
   MapBiomeColors,
   MapPath,
   TowerInstance,
+  TowerType,
   Wave,
   WaveUnit,
 } from 'shared';
@@ -50,7 +54,6 @@ import { BoardSheet } from './board-sheet/board-sheet';
 import { BoardStatus } from './board-status/board-status';
 import type { BoardTool, LaneDraft } from './board-types';
 import { LanesPanel } from './lanes-panel/lanes-panel';
-import { TowerActions } from './tower-actions/tower-actions';
 
 /** Rayon extérieur d'un hex (centre → sommet), en pixels. */
 const CELL_SIZE = 32;
@@ -172,6 +175,8 @@ interface MonsterView {
   position: GridCoord;
   hp: number;
   typeId: string;
+  /** Distance parcourue le long du chemin ; sert à choisir la cible visée par une tour (voir `selectTarget`). */
+  distance: number;
 }
 
 /** Infobulle positionnée au survol d'une tour posée ou d'un monstre, en pixels relatifs au canvas. */
@@ -202,7 +207,7 @@ interface SplashView {
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [BoardHud, BoardSheet, BoardStatus, LanesPanel, Tooltip, TowerActions],
+  imports: [BoardHud, BoardSheet, BoardStatus, LanesPanel, Tooltip],
   templateUrl: './game-board.html',
   styleUrl: './game-board.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -224,12 +229,12 @@ export class GameBoard implements OnInit {
   protected readonly decor = signal<readonly DecorItem[]>([]);
   private projectiles: ProjectileView[] = [];
   private splashes: SplashView[] = [];
+  /** Dernier angle (radians) auquel chaque tour a visé une cible ; conservé tant qu'aucune cible n'est à portée. */
+  private readonly towerFacing = new Map<string, number>();
   private projectileAnimationHandle: number | undefined;
   private customLaneSequence = 0;
   /** Voie en cours de retracé : unités / chemin conservés jusqu'à validation du nouveau tracé. */
-  private retracing:
-    | { index: number; units: WaveUnit[]; path: MapPath }
-    | undefined;
+  private retracing: { index: number; units: WaveUnit[]; path: MapPath } | undefined;
 
   /** Pointeurs actifs pour pan / pinch-zoom. */
   private readonly activePointers = new Map<number, { x: number; y: number }>();
@@ -260,11 +265,12 @@ export class GameBoard implements OnInit {
   protected readonly remainingBudget = signal(0);
   protected readonly defenseBudgetTotal = signal(0);
   protected readonly attackBudgetTotal = signal(0);
+  /** Type de tour prévisualisé sur la case choisie (barre du bas). */
   protected readonly selectedTypeId = signal<string | undefined>(undefined);
-  protected readonly selectedTowerId = signal<string | undefined>(undefined);
-  /** Tour en cours de déplacement (case de destination attendue au prochain clic sur la grille). */
-  protected readonly movingTowerId = signal<string | undefined>(undefined);
+  /** Case choisie (vide ou occupée) : la barre du bas propose d'y construire ou d'en supprimer la tour. */
+  protected readonly pickingCell = signal<GridCoord | undefined>(undefined);
   protected readonly message = signal<string | undefined>(undefined);
+  /** Case survolée (souris/toucher) : pour le curseur et la surbrillance de la case. */
   protected readonly hoverCell = signal<GridCoord | undefined>(undefined);
 
   protected readonly phase = signal<GamePhase>('defense');
@@ -285,7 +291,7 @@ export class GameBoard implements OnInit {
   /** Infobulle affichée au survol d'une tour posée ou d'un monstre sur le plateau. */
   protected readonly boardTooltip = signal<BoardTooltip | undefined>(undefined);
 
-  /** Main (pan) tant qu'aucune pose / tracé / déplacement n'est actif. */
+  /** Main (pan) tant qu'aucun tracé n'est actif. */
   protected readonly boardTool = signal<BoardTool>('pan');
   /** Tiroir d'actions (tour sélectionnée ou voie sélectionnée). */
   protected readonly targetingOpen = signal(false);
@@ -299,9 +305,14 @@ export class GameBoard implements OnInit {
     () => `translate(${this.viewPanX()}px, ${this.viewPanY()}px) scale(${this.viewZoom()})`,
   );
 
-  protected readonly selectedTower = computed(() =>
-    this.towers().find((tower) => tower.id === this.selectedTowerId()),
-  );
+  /** Tour posée sur la case choisie, s'il y en a une (sinon la case est libre). */
+  protected readonly pickingTower = computed(() => {
+    const cell = this.pickingCell();
+    if (!cell) {
+      return undefined;
+    }
+    return this.towers().find((tower) => tower.position.x === cell.x && tower.position.y === cell.y);
+  });
   protected readonly activeLane = computed(() => {
     const index = this.activeLaneIndex();
     return index === undefined ? undefined : this.lanes()[index];
@@ -314,9 +325,17 @@ export class GameBoard implements OnInit {
     }
     return laneDisplayLabel(lane, index);
   });
+  /** Vrai tant qu'une case (vide ou occupée) est choisie dans la barre du bas. */
+  protected readonly isPickingTower = computed(() => this.pickingCell() !== undefined);
+  /** Curseur du canvas : pointer au survol d'une case (sélectionnable), grab sinon. */
+  protected readonly canvasCursor = computed(() => {
+    if (this.isPanning()) {
+      return 'grabbing';
+    }
+    return this.hoverCell() ? 'pointer' : 'grab';
+  });
   protected readonly isTrialRunning = computed(() => this.trialOutcome() === 'pending');
   protected readonly isDrawingPath = computed(() => this.drawingPath() !== undefined);
-  protected readonly isMovingTower = computed(() => this.movingTowerId() !== undefined);
   protected readonly canLaunch = computed(() => {
     if (this.isTrialRunning()) {
       return false;
@@ -361,9 +380,9 @@ export class GameBoard implements OnInit {
     effect(() => {
       this.map();
       this.towers();
-      this.selectedTowerId();
-      this.movingTowerId();
+      this.pickingCell();
       this.hoverCell();
+      this.isPanning();
       this.selectedTypeId();
       this.boardTool();
       this.phase();
@@ -383,15 +402,6 @@ export class GameBoard implements OnInit {
     void this.bootstrap();
   }
 
-  protected enterHandMode(): void {
-    this.boardTool.set('pan');
-    this.selectedTypeId.set(undefined);
-    this.movingTowerId.set(undefined);
-    if (this.isDrawingPath()) {
-      this.cancelTracing();
-    }
-  }
-
   protected toggleTargeting(): void {
     if (this.isTrialRunning()) {
       return;
@@ -402,12 +412,15 @@ export class GameBoard implements OnInit {
     this.targetingOpen.update((open) => !open);
   }
 
+  /** Ferme le tiroir et abandonne le choix de tour en cours (case sélectionnée relâchée). */
   protected closeTargeting(): void {
     this.targetingOpen.set(false);
+    this.pickingCell.set(undefined);
+    this.selectedTypeId.set(undefined);
   }
 
   protected closeDrawers(): void {
-    this.targetingOpen.set(false);
+    this.closeTargeting();
   }
 
   protected onLaunch(): void {
@@ -571,64 +584,56 @@ export class GameBoard implements OnInit {
 
   // ---- Phase Défense ---------------------------------------------------
 
-  protected selectTowerType(typeId: string): void {
-    if (this.isTrialRunning() || this.isMovingTower()) {
-      return;
-    }
-    if (this.selectedTypeId() === typeId) {
-      this.enterHandMode();
-      this.message.set(undefined);
+  /** Choisit le type de tour prévisualisé sur la case choisie (toujours un type sélectionné tant qu'une case l'est). */
+  protected choosePreviewType(typeId: string): void {
+    if (this.isTrialRunning() || !this.pickingCell() || this.pickingTower()) {
       return;
     }
     this.selectedTypeId.set(typeId);
-    this.selectedTowerId.set(undefined);
-    this.targetingOpen.set(false);
-    this.boardTool.set('edit');
-    this.message.set('Touchez une case libre pour poser la tour.');
   }
 
+  /** Construit la tour prévisualisée sur la case choisie. */
+  protected confirmPlaceTower(): void {
+    const coord = this.pickingCell();
+    const typeId = this.selectedTypeId();
+    if (!coord || !typeId || this.isTrialRunning()) {
+      return;
+    }
+    const result = this.engine.placeTower(typeId, coord);
+    if (!result.ok) {
+      this.message.set(FAILURE_MESSAGES[result.reason] ?? 'Placement impossible.');
+      return;
+    }
+    this.message.set(undefined);
+    this.syncFromEngine();
+    this.pickingCell.set(undefined);
+    this.selectedTypeId.set(undefined);
+  }
+
+  /** Supprime la tour posée sur la case choisie. */
   protected deleteSelected(): void {
-    const towerId = this.selectedTowerId();
-    if (!towerId || this.isTrialRunning() || this.isMovingTower()) {
+    const towerId = this.pickingTower()?.id;
+    if (!towerId || this.isTrialRunning()) {
       return;
     }
     const recovered = this.engine.deleteTower(towerId);
     if (recovered === undefined) {
       return;
     }
-    this.selectedTowerId.set(undefined);
-    this.targetingOpen.set(false);
+    this.pickingCell.set(undefined);
+    this.selectedTypeId.set(undefined);
     this.message.set(`Tour supprimée (+${recovered}).`);
     this.syncFromEngine();
   }
 
-  /** Démarre le déplacement de la tour sélectionnée : le prochain clic sur une case libre la relocalise. */
-  protected startMovingTower(): void {
-    const towerId = this.selectedTowerId();
-    if (!towerId || this.isTrialRunning()) {
-      return;
-    }
-    this.boardTool.set('edit');
-    this.movingTowerId.set(towerId);
-    this.targetingOpen.set(false);
-    this.message.set('Touchez une case libre pour déplacer la tour.');
-  }
-
-  protected cancelMovingTower(): void {
-    this.movingTowerId.set(undefined);
-    this.boardTool.set('pan');
-    this.message.set(undefined);
-  }
-
-  /** Abandonne les poses/suppressions/déplacements de la phase Défense en cours et revient à la forteresse de départ. */
+  /** Abandonne les poses/suppressions de la phase Défense en cours et revient à la forteresse de départ. */
   protected resetDefenseSession(): void {
-    if (this.phase() !== 'defense' || this.isTrialRunning()) {
+    if (this.phase() !== 'defense' || this.isTrialRunning() || this.isPickingTower()) {
       return;
     }
     this.engine.resetDefenseSession();
-    this.selectedTowerId.set(undefined);
     this.selectedTypeId.set(undefined);
-    this.movingTowerId.set(undefined);
+    this.pickingCell.set(undefined);
     this.boardTool.set('pan');
     this.targetingOpen.set(false);
     this.message.set(undefined);
@@ -641,8 +646,6 @@ export class GameBoard implements OnInit {
     if (!wave || this.isTrialRunning()) {
       return;
     }
-    this.selectedTowerId.set(undefined);
-    this.movingTowerId.set(undefined);
     this.closeDrawers();
     this.boardTool.set('pan');
     this.message.set(undefined);
@@ -724,7 +727,10 @@ export class GameBoard implements OnInit {
     this.retracing = {
       index,
       units: lane.units.map((unit) => ({ ...unit })),
-      path: { ...lane.path, nodes: lane.path.nodes.map((node) => [node[0], node[1]] as [number, number]) },
+      path: {
+        ...lane.path,
+        nodes: lane.path.nodes.map((node) => [node[0], node[1]] as [number, number]),
+      },
     };
     this.engine.removePath(lane.path.id);
     this.lanes.update((lanes) => lanes.filter((_, i) => i !== index));
@@ -907,13 +913,16 @@ export class GameBoard implements OnInit {
   // ---- Interaction canvas commune --------------------------------------
 
   /**
-   * Tap court.
-   * - Mode Main : sélectionner une tour / voie (inspection), pas de pose.
-   * - Mode Pose/Éditer : pose, tracé, déplacement.
+   * Tap court : sélectionne une case (défense) ou une voie (attaque), ou avance un tracé en cours.
    */
   protected onCanvasTap(event: PointerEvent): void {
     const coord = this.toGridCoord(event);
     if (!coord) {
+      // En dehors de la grille : annule la case choisie en phase Défense.
+      if (this.phase() === 'defense' && this.isPickingTower()) {
+        this.pickingCell.set(undefined);
+        this.selectedTypeId.set(undefined);
+      }
       return;
     }
 
@@ -936,55 +945,27 @@ export class GameBoard implements OnInit {
       return;
     }
 
-    const movingId = this.movingTowerId();
-    if (movingId) {
-      const moveResult = this.engine.moveTower(movingId, coord);
-      if (!moveResult.ok) {
-        this.message.set(FAILURE_MESSAGES[moveResult.reason] ?? 'Déplacement impossible.');
-        return;
-      }
-      this.movingTowerId.set(undefined);
-      this.boardTool.set('pan');
-      this.message.set(undefined);
-      this.syncFromEngine();
-      this.selectedTowerId.set(movingId);
-      return;
-    }
-
     const existing = this.towers().find(
       (tower) => tower.position.x === coord.x && tower.position.y === coord.y,
     );
     if (existing) {
-      this.selectedTypeId.set(undefined);
-      this.boardTool.set('pan');
-      this.selectedTowerId.set(existing.id);
+      // Case occupée : même barre du bas, avec la tour existante prévisualisée + l'option supprimer.
+      this.pickingCell.set(coord);
+      this.selectedTypeId.set(existing.typeId);
       this.message.set(undefined);
-      this.targetingOpen.set(true);
       return;
     }
 
-    // Mode Main : pas de pose sur case vide.
-    if (this.boardTool() === 'pan' || !this.selectedTypeId()) {
-      this.selectedTowerId.set(undefined);
-      this.targetingOpen.set(false);
+    // Case libre : sélectionne la case pour construire une tour depuis la barre du bas
+    // (sauf case non constructible) ; la première tour du catalogue est prévisualisée par défaut.
+    const occupancy = canOccupyCell(this.map(), this.towers(), coord);
+    if (!occupancy.ok) {
+      this.message.set(FAILURE_MESSAGES[occupancy.reason] ?? 'Impossible de construire ici.');
       return;
     }
-
-    const typeId = this.selectedTypeId();
-    if (!typeId) {
-      return;
-    }
-    const result = this.engine.placeTower(typeId, coord);
-    if (!result.ok) {
-      this.message.set(FAILURE_MESSAGES[result.reason] ?? 'Placement impossible.');
-      return;
-    }
+    this.pickingCell.set(coord);
+    this.selectedTypeId.set(TOWER_TYPES[0]?.id);
     this.message.set(undefined);
-    this.syncFromEngine();
-    // Après pose : retour en mode main.
-    this.selectedTypeId.set(undefined);
-    this.boardTool.set('pan');
-    this.selectedTowerId.set(undefined);
   }
 
   /** Vrai si `coord` tombe sur une case parcourue par `path` (nœuds inclus, segments interpolés). */
@@ -1064,7 +1045,9 @@ export class GameBoard implements OnInit {
         units: retracing?.units.map((unit) => ({ ...unit })) ?? [],
       };
       this.engine.addPath(newLane.path);
-      const insertAt = retracing ? Math.min(retracing.index, this.lanes().length) : this.lanes().length;
+      const insertAt = retracing
+        ? Math.min(retracing.index, this.lanes().length)
+        : this.lanes().length;
       this.lanes.update((lanes) => {
         const next = [...lanes];
         next.splice(insertAt, 0, newLane);
@@ -1096,7 +1079,10 @@ export class GameBoard implements OnInit {
   }
 
   /** Infobulle au survol : positionnée en coords viewport (indépendant du zoom/pan). */
-  private computeBoardTooltip(event: { clientX: number; clientY: number }): BoardTooltip | undefined {
+  private computeBoardTooltip(event: {
+    clientX: number;
+    clientY: number;
+  }): BoardTooltip | undefined {
     const coord = this.toGridCoord(event);
     if (!coord) {
       return undefined;
@@ -1107,9 +1093,7 @@ export class GameBoard implements OnInit {
     const left = rect ? event.clientX - rect.left + 14 : 14;
     const top = rect ? event.clientY - rect.top + 14 : 14;
 
-    const tower = this.towers().find(
-      (t) => t.position.x === coord.x && t.position.y === coord.y,
-    );
+    const tower = this.towers().find((t) => t.position.x === coord.x && t.position.y === coord.y);
     if (tower) {
       const type = findTowerType(tower.typeId);
       if (!type) {
@@ -1167,6 +1151,7 @@ export class GameBoard implements OnInit {
         position: trial.getMonsterPosition(monster),
         hp: monster.hp,
         typeId: monster.typeId,
+        distance: monster.distance,
       })),
     );
     this.trialOutcome.set(trial.getOutcome());
@@ -1220,6 +1205,7 @@ export class GameBoard implements OnInit {
         this.resetTrialDisplay();
       } else {
         this.message.set('Défense échouée — le château est tombé. Ajustez vos tours et réessayez.');
+        this.trialMonsters.set([]);
       }
     } else {
       if (outcome === 'success') {
@@ -1240,6 +1226,7 @@ export class GameBoard implements OnInit {
         this.resetTrialDisplay();
       } else {
         this.message.set('Vague anéantie, aucune brèche. Recomposez et réessayez.');
+        this.trialMonsters.set([]);
       }
     }
     this.pendingAttackWave = undefined;
@@ -1296,7 +1283,10 @@ export class GameBoard implements OnInit {
   }
 
   /** Position du curseur en world-space (unité = distance entre centres voisins). */
-  private toFractionalCoord(event: { clientX: number; clientY: number }): { x: number; y: number } | undefined {
+  private toFractionalCoord(event: {
+    clientX: number;
+    clientY: number;
+  }): { x: number; y: number } | undefined {
     const px = this.clientToCanvasPx(event.clientX, event.clientY);
     if (!px) {
       return undefined;
@@ -1412,7 +1402,19 @@ export class GameBoard implements OnInit {
     this.clampPan();
   }
 
-  /** Empêche de faire sortir entièrement la carte du viewport. */
+  /**
+   * Bornes de pan sur un axe : carte centrée (± un peu de jeu pour le geste) si elle tient dans
+   * le viewport, sinon bornée classiquement pour ne pas la faire sortir entièrement du cadre.
+   */
+  private panBounds(viewportSize: number, scaledSize: number, margin: number): [number, number] {
+    if (scaledSize <= viewportSize) {
+      const center = (viewportSize - scaledSize) / 2;
+      return [center - margin, center + margin];
+    }
+    return [viewportSize - scaledSize - margin, margin];
+  }
+
+  /** Empêche de faire sortir entièrement la carte du viewport (et la centre si elle y tient). */
   private clampPan(): void {
     const canvas = this.canvasRef()?.nativeElement;
     const viewport = this.viewportRef()?.nativeElement;
@@ -1427,11 +1429,8 @@ export class GameBoard implements OnInit {
     const marginX = Math.min(PAN_EDGE_MARGIN_PX, vw * 0.2);
     const marginY = Math.min(PAN_EDGE_MARGIN_PX, vh * 0.2);
 
-    // Toujours un peu de jeu (même à ×1), sinon le pan est impossible et conflict avec la pose.
-    const minX = vw - scaledW - marginX;
-    const maxX = marginX;
-    const minY = vh - scaledH - marginY;
-    const maxY = marginY;
+    const [minX, maxX] = this.panBounds(vw, scaledW, marginX);
+    const [minY, maxY] = this.panBounds(vh, scaledH, marginY);
 
     this.viewPanX.set(Math.min(maxX, Math.max(minX, this.viewPanX())));
     this.viewPanY.set(Math.min(maxY, Math.max(minY, this.viewPanY())));
@@ -1456,40 +1455,21 @@ export class GameBoard implements OnInit {
       return false;
     }
     const type = findTowerType(typeId);
-    return canPlaceTower(
-      this.map(),
-      this.towers(),
-      type,
-      coord,
-      this.remainingBudget(),
-    ).ok;
+    return canPlaceTower(this.map(), this.towers(), type, coord, this.remainingBudget()).ok;
   }
 
-  /** Centre + portée à prévisualiser sur les chemins : la tour sélectionnée, ou celle en attente de pose au survol. */
+  /** Centre + portée à prévisualiser sur les chemins pour la tour en cours de choix (case sélectionnée). */
   private computeRangePreview(): { center: GridCoord; range: number } | undefined {
-    if (
-      this.phase() !== 'defense' ||
-      this.boardTool() !== 'edit' ||
-      this.isTrialRunning() ||
-      this.isMovingTower()
-    ) {
+    if (this.phase() !== 'defense' || this.isTrialRunning()) {
       return undefined;
     }
-    const selected = this.selectedTower();
-    if (selected) {
-      const type = findTowerType(selected.typeId);
-      return type ? { center: selected.position, range: type.range } : undefined;
-    }
-    if (this.selectedTowerId()) {
-      return undefined;
-    }
-    const hover = this.hoverCell();
+    const cell = this.pickingCell();
     const typeId = this.selectedTypeId();
-    if (!hover || !typeId || !this.canPlaceSelectedTypeAt(hover)) {
+    if (!cell || !typeId) {
       return undefined;
     }
     const type = findTowerType(typeId);
-    return type ? { center: hover, range: type.range } : undefined;
+    return type ? { center: cell, range: type.range } : undefined;
   }
 
   /**
@@ -1551,8 +1531,10 @@ export class GameBoard implements OnInit {
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
       this.fitCanvasToViewport();
+      this.clampPan();
     } else if (!canvas.style.width) {
       this.fitCanvasToViewport();
+      this.clampPan();
     }
 
     const ctx = canvas.getContext('2d');
@@ -1639,32 +1621,70 @@ export class GameBoard implements OnInit {
     }
 
     const chateauCenter = cellCenterPx(map.chateau);
-    if (!this.drawSprite(ctx, 'chateau', chateauCenter.x, chateauCenter.y, CELL_SIZE * 0.9)) {
+    if (!this.drawSprite(ctx, 'chateau', chateauCenter.x, chateauCenter.y, CELL_SIZE * 2)) {
       ctx.fillStyle = '#9b9086';
       ctx.beginPath();
       ctx.arc(chateauCenter.x, chateauCenter.y, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
       ctx.fill();
     }
 
+    // Case survolée : surbrillance générique (retour visuel « cette case est cliquable »).
     const hover = this.hoverCell();
-    const selectedTypeId = this.selectedTypeId();
+    if (hover && !this.isPanning()) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      this.fillHex(ctx, hover);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = 2;
+      this.strokeHex(ctx, hover);
+      ctx.restore();
+    }
+
+    // Case choisie depuis la barre du bas (vide ou occupée) : contour de sélection.
+    const picking = this.pickingCell();
+    if (picking) {
+      ctx.save();
+      ctx.strokeStyle = '#5fb0ff';
+      ctx.lineWidth = 3;
+      this.strokeHex(ctx, picking);
+      ctx.restore();
+    }
+
+    // Tour prévisualisée sur une case libre choisie : sprite grisé, même taille qu'une fois posée.
+    const previewTypeId = this.selectedTypeId();
     if (
-      hover &&
-      selectedTypeId &&
-      this.boardTool() === 'edit' &&
-      !this.selectedTowerId() &&
+      picking &&
+      previewTypeId &&
+      !this.pickingTower() &&
       !this.isTrialRunning() &&
-      this.phase() === 'defense' &&
-      this.canPlaceSelectedTypeAt(hover)
+      this.phase() === 'defense'
     ) {
-      const type = findTowerType(selectedTypeId);
+      const type = findTowerType(previewTypeId);
       if (type) {
-        this.drawRangeRing(ctx, hover.x, hover.y, type.range, 'rgba(120, 200, 255, 0.5)');
+        const affordable = this.canPlaceSelectedTypeAt(picking);
+        this.drawRangeRing(
+          ctx,
+          picking.x,
+          picking.y,
+          type.range,
+          affordable ? 'rgba(120, 200, 255, 0.5)' : 'rgba(255, 143, 122, 0.5)',
+        );
+        const center = cellCenterPx(picking);
+        ctx.save();
+        ctx.filter = 'grayscale(1)';
+        ctx.globalAlpha = affordable ? 0.75 : 0.45;
+        if (!this.drawSprite(ctx, previewTypeId, center.x, center.y, CELL_SIZE * 2)) {
+          ctx.fillStyle = '#8fd0ff';
+          ctx.beginPath();
+          ctx.arc(center.x, center.y, CELL_SIZE - 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
       }
     }
 
     for (const tower of this.towers()) {
-      const isSelected = tower.id === this.selectedTowerId();
+      const isSelected = tower.id === this.pickingTower()?.id;
       const type = findTowerType(tower.typeId);
       const center = cellCenterPx(tower.position);
 
@@ -1678,14 +1698,24 @@ export class GameBoard implements OnInit {
         );
       }
 
-      if (!this.drawSprite(ctx, tower.typeId, center.x, center.y, CELL_SIZE * 0.85)) {
+      this.drawTowerShadow(ctx, center);
+
+      const facing = this.computeTowerFacing(tower, type, center);
+      ctx.save();
+      ctx.translate(center.x, center.y);
+      ctx.rotate(facing);
+      ctx.translate(-center.x, -center.y);
+      const spriteDrawn = this.drawSprite(ctx, tower.typeId, center.x, center.y, CELL_SIZE * 2);
+      ctx.restore();
+
+      if (!spriteDrawn) {
         ctx.fillStyle = isSelected ? '#5fb0ff' : '#8fd0ff';
         ctx.beginPath();
-        ctx.arc(center.x, center.y, CELL_SIZE / 2 - 6, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, CELL_SIZE - 4, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = '#0b0d12';
-        ctx.font = `${CELL_SIZE * 0.4}px sans-serif`;
+        ctx.font = `${CELL_SIZE * 0.7}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText((type?.name ?? '?').charAt(0).toUpperCase(), center.x, center.y);
@@ -1695,7 +1725,7 @@ export class GameBoard implements OnInit {
         ctx.strokeStyle = '#5fb0ff';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(center.x, center.y, CELL_SIZE / 2 - 4, 0, Math.PI * 2);
+        ctx.arc(center.x, center.y, CELL_SIZE - 2, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -1704,16 +1734,18 @@ export class GameBoard implements OnInit {
       const { x: cx, y: cy } = worldToPx(monster.position);
       const maxHp = findMonsterType(monster.typeId)?.hp ?? monster.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, monster.hp / maxHp) : 0;
-      const radius = CELL_SIZE * 0.22;
+      const radius = CELL_SIZE * 0.44;
 
-      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 0.55)) {
+      this.drawMonsterShadow(ctx, cx, cy, radius);
+
+      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 1.1)) {
         ctx.fillStyle = '#e0524a';
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      const barWidth = CELL_SIZE * 0.6;
+      const barWidth = CELL_SIZE * 0.9;
       const barX = cx - barWidth / 2;
       const barY = cy - radius - 6;
       ctx.fillStyle = '#3a1414';
@@ -1818,6 +1850,65 @@ export class GameBoard implements OnInit {
       }
     });
     ctx.stroke();
+  }
+
+  /** Ombre au sol de la tour, dessinée hors de toute rotation pour qu'elle ne tourne pas avec le sprite. */
+  private drawTowerShadow(ctx: CanvasRenderingContext2D, center: GridCoord): void {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(
+      center.x,
+      center.y + CELL_SIZE * 0.75,
+      CELL_SIZE * 0.6,
+      CELL_SIZE * 0.16,
+      0,
+      0,
+      Math.PI * 2,
+    );
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Ombre au sol d'un monstre, dessinée sous son sprite (proportionnelle à son rayon d'affichage). */
+  private drawMonsterShadow(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number): void {
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + radius * 0.85, radius * 0.9, radius * 0.28, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * Angle (radians, 0 = vers la droite) auquel orienter le sprite d'une tour vers sa cible courante.
+   * Réutilise la même sélection de cible que la simulation (`selectTarget`), indépendamment du
+   * cooldown, pour que la tour suive visuellement le monstre qu'elle viserait si elle tirait.
+   * Conserve le dernier angle connu tant qu'aucune cible n'est à portée, plutôt que de revenir à 0.
+   */
+  private computeTowerFacing(
+    tower: TowerInstance,
+    type: TowerType | undefined,
+    center: GridCoord,
+  ): number {
+    if (!type) {
+      return this.towerFacing.get(tower.id) ?? 0;
+    }
+    const monsters = this.trialMonsters();
+    const candidates = monsters.map((monster, index) => ({
+      id: String(index),
+      distance: monster.distance,
+      position: monster.position,
+    }));
+    const targetId = selectTarget(hexToWorld(tower.position), type.range, candidates);
+    if (targetId === undefined) {
+      return this.towerFacing.get(tower.id) ?? 0;
+    }
+    const target = monsters[Number(targetId)];
+    const targetPx = worldToPx(target.position);
+    const angle = Math.atan2(targetPx.y - center.y, targetPx.x - center.x);
+    this.towerFacing.set(tower.id, angle);
+    return angle;
   }
 
   /** Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête. */

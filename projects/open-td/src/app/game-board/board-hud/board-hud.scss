@@ -69,6 +69,10 @@
     color: var(--phase-accent, #5fb0ff);
   }
 
+  &--warn .board-hud__tool-cost {
+    color: #ff8f7a;
+  }
+
   &:disabled {
     opacity: 0.4;
     cursor: not-allowed;

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { TOWER_TYPES } from 'shared';
 import type { GamePhase, TowerType } from 'shared';
 import { Button } from '../../ui/button/button';
@@ -24,25 +24,42 @@ export class BoardHud {
   readonly chateauHp = input(0);
   readonly chateauMaxHp = input(0);
   readonly breachCount = input(0);
-  readonly selectedTypeId = input<string | undefined>(undefined);
   readonly lanes = input<readonly LaneDraft[]>([]);
   readonly activeLaneIndex = input<number | undefined>(undefined);
   readonly targetingOpen = input(false);
   readonly canLaunch = input(false);
   readonly message = input<string | undefined>(undefined);
+  /** Vrai tant qu'une case (vide ou occupée) est choisie pour construire/gérer une tour. */
+  readonly pickingActive = input(false);
+  /** Vrai si la case choisie porte déjà une tour (propose Supprimer plutôt que Construire). */
+  readonly pickingHasTower = input(false);
+  /** Type de tour prévisualisé sur la case choisie. */
+  readonly selectedTypeId = input<string | undefined>(undefined);
 
-  readonly towerTypeSelect = output<string>();
   readonly laneSelect = output<number>();
   readonly startTracing = output<void>();
   readonly undoTracePoint = output<void>();
   readonly cancelTracing = output<void>();
   readonly targetingToggle = output<void>();
   readonly launch = output<void>();
+  readonly typeSelect = output<string>();
+  readonly confirmPlace = output<void>();
+  readonly deleteTower = output<void>();
+  readonly resetDefense = output<void>();
 
-  protected readonly towerTypes = TOWER_TYPES;
   protected readonly laneDisplayLabel = laneDisplayLabel;
+  protected readonly towerTypes = TOWER_TYPES;
+
+  protected readonly selectedType = computed<TowerType | undefined>(() =>
+    this.towerTypes.find((type) => type.id === this.selectedTypeId()),
+  );
 
   protected isAffordable(type: TowerType): boolean {
     return type.cost <= this.remainingBudget();
+  }
+
+  protected canConfirmPlace(): boolean {
+    const type = this.selectedType();
+    return !this.trialRunning() && !!type && this.isAffordable(type);
   }
 }

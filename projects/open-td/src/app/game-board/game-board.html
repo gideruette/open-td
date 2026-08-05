@@ -1,15 +1,11 @@
-<section
-  class="board"
-  [class.board--attack]="phase() === 'attack'"
-  [class.board--pan]="boardTool() === 'pan'"
-  [class.board--edit]="boardTool() === 'edit'"
->
+<section class="board" [class.board--attack]="phase() === 'attack'">
   <div class="board__stage">
     <div class="board__map">
       <div
         #viewport
         class="board__canvas-wrap"
         [class.board__canvas-wrap--panning]="isPanning()"
+        [style.cursor]="canvasCursor()"
         (pointerdown)="onViewPointerDown($event)"
         (pointermove)="onViewPointerMove($event)"
         (pointerup)="onViewPointerUp($event)"
@@ -35,34 +31,22 @@
       <otd-board-sheet
         sheetId="board-targeting"
         [open]="targetingOpen()"
-        [title]="phase() === 'defense' ? (selectedTower()?.typeId ?? 'Tour') : activeLaneLabel()"
-        [ariaLabel]="phase() === 'defense' ? 'Tour sélectionnée' : 'Voie sélectionnée'"
+        [title]="activeLaneLabel()"
+        ariaLabel="Voie sélectionnée"
         (closed)="closeTargeting()"
       >
-        @if (phase() === 'defense') {
-          <otd-tower-actions
-            [tower]="selectedTower()"
-            [moving]="isMovingTower()"
-            [trialRunning]="isTrialRunning()"
-            (startMove)="startMovingTower()"
-            (cancelMove)="cancelMovingTower()"
-            (remove)="deleteSelected()"
-            (reset)="resetDefenseSession()"
-          />
-        } @else {
-          <otd-lanes-panel
-            [lane]="activeLane()"
-            [laneIndex]="activeLaneIndex()"
-            [trialRunning]="isTrialRunning()"
-            [attackBudgetRemaining]="getAttackBudgetRemaining()"
-            (laneRename)="renameActiveLane($event)"
-            (laneRemove)="removeActiveLane()"
-            (laneRetrace)="retraceActiveLane()"
-            (monsterAppend)="appendMonster($event)"
-            (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
-            (unitRemove)="removeActiveQueueUnit($event)"
-          />
-        }
+        <otd-lanes-panel
+          [lane]="activeLane()"
+          [laneIndex]="activeLaneIndex()"
+          [trialRunning]="isTrialRunning()"
+          [attackBudgetRemaining]="getAttackBudgetRemaining()"
+          (laneRename)="renameActiveLane($event)"
+          (laneRemove)="removeActiveLane()"
+          (laneRetrace)="retraceActiveLane()"
+          (monsterAppend)="appendMonster($event)"
+          (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
+          (unitRemove)="removeActiveQueueUnit($event)"
+        />
       </otd-board-sheet>
 
       @if (targetingOpen()) {
@@ -86,13 +70,18 @@
       [chateauHp]="trialChateauHp() ?? chateauMaxHp()"
       [chateauMaxHp]="chateauMaxHp()"
       [breachCount]="trialBreachCount() ?? 0"
-      [selectedTypeId]="selectedTypeId()"
       [lanes]="lanes()"
       [activeLaneIndex]="activeLaneIndex()"
       [targetingOpen]="targetingOpen()"
       [canLaunch]="canLaunch()"
       [message]="message()"
-      (towerTypeSelect)="selectTowerType($event)"
+      [pickingActive]="isPickingTower()"
+      [pickingHasTower]="!!pickingTower()"
+      [selectedTypeId]="selectedTypeId()"
+      (typeSelect)="choosePreviewType($event)"
+      (confirmPlace)="confirmPlaceTower()"
+      (deleteTower)="deleteSelected()"
+      (resetDefense)="resetDefenseSession()"
       (laneSelect)="selectLane($event)"
       (startTracing)="startTracing()"
       (undoTracePoint)="undoLastTracePoint()"

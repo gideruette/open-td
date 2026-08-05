@@ -1,8 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <ellipse cx="22" cy="20" rx="6" ry="9" fill="#6fae4a"/>
-  <ellipse cx="42" cy="20" rx="6" ry="9" fill="#6fae4a"/>
-  <circle cx="32" cy="34" r="22" fill="#6fae4a"/>
-  <circle cx="24" cy="32" r="4" fill="#1a1a1a"/>
-  <circle cx="40" cy="32" r="4" fill="#1a1a1a"/>
-  <path d="M22 44 Q32 50 42 44" stroke="#2a3a1a" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <defs>
+    <radialGradient id="skin" cx="35%" cy="28%" r="70%">
+      <stop offset="0%" stop-color="#9fe07a"/>
+      <stop offset="100%" stop-color="#3a5c22"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <polygon points="10,24 22,14 22,30" fill="#5c8a3a" stroke="#2a3a1a" stroke-width="1.5"/>
+  <polygon points="54,24 42,14 42,30" fill="#5c8a3a" stroke="#2a3a1a" stroke-width="1.5"/>
+  <circle cx="32" cy="34" r="22" fill="url(#skin)" stroke="#2a3a1a" stroke-width="1.5"/>
+  <circle cx="32" cy="34" r="22" fill="url(#gloss)"/>
+  <path d="M18 46 Q32 30 46 46" fill="#274012" opacity="0.4"/>
+  <circle cx="24" cy="32" r="4.2" fill="#1a1a1a"/>
+  <circle cx="40" cy="32" r="4.2" fill="#1a1a1a"/>
+  <circle cx="22.6" cy="30.6" r="1.1" fill="#e8ffcf"/>
+  <circle cx="38.6" cy="30.6" r="1.1" fill="#e8ffcf"/>
+  <path d="M21 45 Q32 52 43 45" stroke="#1c2a10" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <polygon points="24,45.5 22,49 26,47" fill="#f4f0e0"/>
+  <polygon points="40,45.5 42,49 38,47" fill="#f4f0e0"/>
 </svg>

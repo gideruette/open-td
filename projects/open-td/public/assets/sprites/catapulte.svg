@@ -1,7 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <circle cx="32" cy="32" r="28" fill="#241a12"/>
-  <path d="M22 46 L22 26 Q22 16 32 16 Q42 16 42 26 L42 46" stroke="#b5651d" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <line x1="22" y1="46" x2="32" y2="34" stroke="#e8d9b0" stroke-width="2"/>
-  <line x1="42" y1="46" x2="32" y2="34" stroke="#e8d9b0" stroke-width="2"/>
-  <circle cx="32" cy="34" r="5" fill="#8a8a86"/>
+  <defs>
+    <linearGradient id="wood" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#d38a4a"/>
+      <stop offset="100%" stop-color="#7a4420"/>
+    </linearGradient>
+  </defs>
+  <circle cx="18" cy="46" r="5" fill="#3a2a1a" stroke="#20140c" stroke-width="1.5"/>
+  <circle cx="46" cy="46" r="5" fill="#3a2a1a" stroke="#20140c" stroke-width="1.5"/>
+  <line x1="18" y1="42" x2="18" y2="50" stroke="#20140c" stroke-width="1"/>
+  <line x1="14" y1="46" x2="22" y2="46" stroke="#20140c" stroke-width="1"/>
+  <line x1="46" y1="42" x2="46" y2="50" stroke="#20140c" stroke-width="1"/>
+  <line x1="42" y1="46" x2="50" y2="46" stroke="#20140c" stroke-width="1"/>
+  <path d="M20 45 L20 25 Q20 15 32 15 Q44 15 44 25 L44 45" stroke="url(#wood)" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="4" fill="#5c5850" stroke="#2a2822" stroke-width="1"/>
+  <line x1="20" y1="45" x2="30" y2="33" stroke="#e8d9b0" stroke-width="2"/>
+  <line x1="44" y1="45" x2="30" y2="33" stroke="#e8d9b0" stroke-width="2"/>
+  <circle cx="29" cy="20" r="6" fill="#4a4a48" stroke="#26261e" stroke-width="1.4"/>
 </svg>
