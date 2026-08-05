@@ -28,37 +28,9 @@
         }
       </div>
 
-      <otd-board-status
-        [phase]="phase()"
-        [palier]="palier()"
-        [vagueCourante]="vagueCourante()"
-        [trialRunning]="isTrialRunning()"
-        (reset)="onResetClick()"
-      />
+      <otd-board-status />
     </div>
 
-    <otd-board-hud
-      [phase]="phase()"
-      [trialRunning]="isTrialRunning()"
-      [drawingPath]="isDrawingPath()"
-      [activeLaneIndex]="activeLaneIndex()"
-      [activeLane]="activeLane()"
-      [lanes]="lanes()"
-      [pickingActive]="isPickingTower()"
-      [pickingHasTower]="!!pickingTower()"
-      [selectedTypeId]="selectedTypeId()"
-      (typeSelect)="choosePreviewType($event)"
-      (confirmPlace)="confirmPlaceTower()"
-      (deleteTower)="deleteSelected()"
-      (startTracing)="startTracing()"
-      (undoTracePoint)="undoLastTracePoint()"
-      (cancelTracing)="cancelTracing()"
-      (laneSelect)="selectLane($event)"
-      (laneRename)="renameActiveLane($event)"
-      (laneRemove)="removeActiveLane()"
-      (monsterAppend)="appendMonster($event)"
-      (unitMove)="moveActiveQueueUnit($event.unitIndex, $event.delta)"
-      (unitRemove)="removeActiveQueueUnit($event)"
-    />
+    <otd-board-hud />
   </div>
 </section>

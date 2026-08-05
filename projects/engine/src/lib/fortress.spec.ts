@@ -6,6 +6,7 @@ import {
   findTowerAt,
   isBorderCell,
   isChateauCell,
+  isPathCell,
   isWithinGrid,
   removeTower,
   spentBudget,
@@ -61,6 +62,16 @@ describe('isBorderCell', () => {
   });
 });
 
+describe('isPathCell', () => {
+  it('is true for a cell crossed by a path', () => {
+    expect(isPathCell(map, { x: 2, y: 3 })).toBe(true);
+  });
+
+  it('is false elsewhere', () => {
+    expect(isPathCell(map, { x: 1, y: 1 })).toBe(false);
+  });
+});
+
 describe('findTowerAt', () => {
   const towers: TowerInstance[] = [
     { id: 't1', typeId: 'archer', position: { x: 1, y: 1 }, level: 1, placedAtPalier: 1 },
@@ -111,6 +122,13 @@ describe('canOccupyCell', () => {
     expect(canOccupyCell(map, towers, { x: 1, y: 1 })).toEqual({
       ok: false,
       reason: 'occupied',
+    });
+  });
+
+  it('rejects a cell crossed by a path', () => {
+    expect(canOccupyCell(map, [], { x: 2, y: 3 })).toEqual({
+      ok: false,
+      reason: 'path-cell',
     });
   });
 
@@ -176,8 +194,11 @@ describe('canPlaceTower', () => {
     expect(canPlaceTower(map, [], archer, { x: 1, y: 1 }, 100)).toEqual({ ok: true });
   });
 
-  it('accepts a placement on a path cell (paths no longer block building)', () => {
-    expect(canPlaceTower(map, [], archer, { x: 2, y: 3 }, 100)).toEqual({ ok: true });
+  it('rejects a placement on a path cell', () => {
+    expect(canPlaceTower(map, [], archer, { x: 2, y: 3 }, 100)).toEqual({
+      ok: false,
+      reason: 'path-cell',
+    });
   });
 });
 

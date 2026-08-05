@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="skin" cx="35%" cy="28%" r="70%">
+      <stop offset="0%" stop-color="#c9b18a"/>
+      <stop offset="100%" stop-color="#5a4830"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <ellipse cx="16" cy="22" rx="7" ry="8" fill="#ad9670" stroke="#3a2e1a" stroke-width="1.2"/>
+  <ellipse cx="48" cy="22" rx="7" ry="8" fill="#ad9670" stroke="#3a2e1a" stroke-width="1.2"/>
+  <ellipse cx="16" cy="22" rx="3.4" ry="4.4" fill="#d99a9a"/>
+  <ellipse cx="48" cy="22" rx="3.4" ry="4.4" fill="#d99a9a"/>
+  <circle cx="32" cy="36" r="20" fill="url(#skin)" stroke="#2a2010" stroke-width="1.4"/>
+  <circle cx="32" cy="36" r="20" fill="url(#gloss)"/>
+  <polygon points="32,52 26,60 38,60" fill="#c78888" stroke="#3a2e1a" stroke-width="1"/>
+  <circle cx="24" cy="34" r="3.6" fill="#0f0f0f"/>
+  <circle cx="40" cy="34" r="3.6" fill="#0f0f0f"/>
+  <circle cx="22.8" cy="32.8" r="0.9" fill="#ffe9c8"/>
+  <circle cx="38.8" cy="32.8" r="0.9" fill="#ffe9c8"/>
+  <circle cx="32" cy="42" r="2.2" fill="#e0a0a0"/>
+  <line x1="20" y1="43" x2="6" y2="40" stroke="#efe7d6" stroke-width="0.8" opacity="0.7"/>
+  <line x1="20" y1="45" x2="6" y2="46" stroke="#efe7d6" stroke-width="0.8" opacity="0.7"/>
+  <line x1="44" y1="43" x2="58" y2="40" stroke="#efe7d6" stroke-width="0.8" opacity="0.7"/>
+  <line x1="44" y1="45" x2="58" y2="46" stroke="#efe7d6" stroke-width="0.8" opacity="0.7"/>
+  <polygon points="29,46 32,52 35,46" fill="#f4f0e0"/>
+</svg>

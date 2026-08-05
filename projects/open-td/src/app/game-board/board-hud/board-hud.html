@@ -9,7 +9,7 @@
             [class.board-hud__lane-tab--active]="activeLaneIndex() === i"
             [attr.aria-selected]="activeLaneIndex() === i"
             [disabled]="trialRunning()"
-            (click)="laneSelect.emit(i)"
+            (click)="lanesService.selectLane(i)"
           >
             {{ laneDisplayLabel(entry, i) }}
           </button>
@@ -20,7 +20,7 @@
           [disabled]="trialRunning()"
           aria-label="Ajouter un chemin"
           title="Ajouter un chemin"
-          (click)="startTracing.emit()"
+          (click)="lanesService.startTracing()"
         >
           +
         </button>
@@ -31,23 +31,14 @@
             [disabled]="trialRunning()"
             aria-label="Supprimer ce chemin"
             title="Supprimer ce chemin"
-            (click)="laneRemove.emit()"
+            (click)="lanesService.removeActiveLane()"
           >
             Supprimer
           </button>
         }
       </div>
-      @if (activeLane(); as lane) {
-        <otd-lanes-panel
-          [lane]="lane"
-          [laneIndex]="activeLaneIndex()!"
-          [trialRunning]="trialRunning()"
-          [attackBudgetRemaining]="attackBudgetRemaining()"
-          (laneRename)="laneRename.emit($event)"
-          (monsterAppend)="monsterAppend.emit($event)"
-          (unitMove)="unitMove.emit($event)"
-          (unitRemove)="unitRemove.emit($event)"
-        />
+      @if (activeLane()) {
+        <otd-lanes-panel />
       }
     </div>
   }
@@ -65,7 +56,7 @@
             [attr.aria-pressed]="selectedTypeId() === type.id"
             [attr.aria-label]="type.name + ' (' + type.cost + ')'"
             [title]="type.name + ' · ' + type.cost"
-            (click)="typeSelect.emit(type.id)"
+            (click)="defenseService.choosePreviewType(type.id)"
           >
             <img
               class="board-hud__tool-sprite"
@@ -79,22 +70,22 @@
     }
   } @else if (phase() === 'attack' && drawingPath()) {
     <div class="board-hud__tools" role="group" aria-label="Chemins">
-      <otd-button size="sm" (clicked)="undoTracePoint.emit()">Annuler point</otd-button>
-      <otd-button size="sm" (clicked)="cancelTracing.emit()">Annuler tracé</otd-button>
+      <otd-button size="sm" (clicked)="lanesService.undoLastTracePoint()">Annuler point</otd-button>
+      <otd-button size="sm" (clicked)="lanesService.cancelTracing()">Annuler tracé</otd-button>
     </div>
   }
 
   @if (pickingActive()) {
     <div class="board-hud__launch">
       @if (pickingHasTower()) {
-        <otd-button variant="danger" [disabled]="trialRunning()" (clicked)="deleteTower.emit()">
+        <otd-button variant="danger" [disabled]="trialRunning()" (clicked)="defenseService.deleteSelected()">
           Supprimer
         </otd-button>
       } @else {
         <otd-button
           variant="success"
           [disabled]="!canConfirmPlace()"
-          (clicked)="confirmPlace.emit()"
+          (clicked)="defenseService.confirmPlaceTower()"
         >
           Construire
         </otd-button>

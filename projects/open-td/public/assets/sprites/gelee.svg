@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="jelly" cx="35%" cy="24%" r="75%">
+      <stop offset="0%" stop-color="#9adfe8" stop-opacity="0.9"/>
+      <stop offset="70%" stop-color="#2f9bb0" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#175c6e" stop-opacity="0.9"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="32%" cy="20%" r="50%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <path d="M32 10 Q54 16 52 38 Q50 56 32 58 Q14 56 12 38 Q10 16 32 10 Z" fill="url(#jelly)" stroke="#0d3540" stroke-width="1.6"/>
+  <path d="M32 10 Q54 16 52 38 Q50 56 32 58 Q14 56 12 38 Q10 16 32 10 Z" fill="url(#gloss)"/>
+  <circle cx="22" cy="42" r="3" fill="#d8f7fa" opacity="0.6"/>
+  <circle cx="40" cy="46" r="2.2" fill="#d8f7fa" opacity="0.55"/>
+  <circle cx="34" cy="24" r="2.6" fill="#d8f7fa" opacity="0.5"/>
+  <circle cx="25" cy="30" r="4" fill="#0d3540"/>
+  <circle cx="39" cy="30" r="4" fill="#0d3540"/>
+  <circle cx="23.6" cy="28.6" r="1.1" fill="#e8ffff"/>
+  <circle cx="37.6" cy="28.6" r="1.1" fill="#e8ffff"/>
+  <path d="M24 40 Q32 45 40 40" stroke="#0d3540" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

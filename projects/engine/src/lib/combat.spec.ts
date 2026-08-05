@@ -17,7 +17,70 @@ function wave(...lanes: WaveLane[]): Wave {
 const unit: MonsterType = { id: 'unit', name: 'Unit', description: '', cost: 1, hp: 1000, speed: 1, armored: false, chateauDamage: 1 };
 const goblin: MonsterType = { id: 'goblin', name: 'Gobelin', description: '', cost: 5, hp: 20, speed: 1, armored: false, chateauDamage: 1 };
 const golem: MonsterType = { id: 'golem', name: 'Golem', description: '', cost: 30, hp: 40, speed: 1, armored: true, chateauDamage: 4 };
-const monsterCatalog: MonsterType[] = [unit, goblin, golem];
+const regenerating: MonsterType = {
+  id: 'regenerating',
+  name: 'Regenerating',
+  description: '',
+  cost: 1,
+  hp: 20,
+  speed: 1,
+  armored: false,
+  chateauDamage: 1,
+  regenPerTick: 5,
+};
+const slowResistant: MonsterType = {
+  id: 'slow-resistant',
+  name: 'Slow resistant',
+  description: '',
+  cost: 1,
+  hp: 1000,
+  speed: 1,
+  armored: false,
+  chateauDamage: 1,
+  slowResistance: 1,
+};
+const partiallySlowResistant: MonsterType = {
+  id: 'partially-slow-resistant',
+  name: 'Partially slow resistant',
+  description: '',
+  cost: 1,
+  hp: 1000,
+  speed: 1,
+  armored: false,
+  chateauDamage: 1,
+  slowResistance: 0.5,
+};
+const splitter: MonsterType = {
+  id: 'splitter',
+  name: 'Splitter',
+  description: '',
+  cost: 1,
+  hp: 10,
+  speed: 1,
+  armored: false,
+  chateauDamage: 1,
+  splitOnDeath: { typeId: 'split-child', count: 2 },
+};
+const splitChild: MonsterType = {
+  id: 'split-child',
+  name: 'Split child',
+  description: '',
+  cost: 1,
+  hp: 5,
+  speed: 1,
+  armored: false,
+  chateauDamage: 1,
+};
+const monsterCatalog: MonsterType[] = [
+  unit,
+  goblin,
+  golem,
+  regenerating,
+  slowResistant,
+  partiallySlowResistant,
+  splitter,
+  splitChild,
+];
 
 const weakTower: TowerType = { id: 'weak', name: 'Weak', description: '', cost: 1, range: 100, damage: 1, cooldown: 1000 };
 const strongTower: TowerType = { id: 'strong', name: 'Strong', description: '', cost: 1, range: 100, damage: 1000, cooldown: 1 };
@@ -144,6 +207,147 @@ describe('DefenseSimulation', () => {
     const [monster] = sim.getMonsters();
 
     expect(monster.hp).toBe(goblin.hp - armorTower.damage);
+  });
+
+  it('regenerates hp each tick up to the type max, on top of damage taken', () => {
+    const towers = [tower({ typeId: 'weak' })];
+    const sim = new DefenseSimulation(
+      towers,
+      wave(lane([{ type: 'regenerating' }])),
+      100,
+      monsterCatalog,
+      towerCatalog,
+      1,
+    );
+
+    sim.step(); // spawn at hp 20 (already max), weak tower hits for 1 -> 19
+    expect(sim.getMonsters()[0].hp).toBe(19);
+
+    sim.step(); // weak tower still on cooldown (1000); regen brings hp back up, capped at 20
+    expect(sim.getMonsters()[0].hp).toBe(20);
+  });
+
+  it('reduces the effective slow of a monster with partial slow resistance', () => {
+    const towers = [tower({ typeId: 'slow' })];
+    const sim = new DefenseSimulation(
+      towers,
+      wave(lane([{ type: 'partially-slow-resistant' }])),
+      100,
+      monsterCatalog,
+      towerCatalog,
+      1,
+    );
+
+    sim.step();
+    const [monster] = sim.getMonsters();
+
+    // slowFactor 0.5 blended halfway toward 1 (resistance 0.5) -> effective factor 0.75
+    expect(monster.distance).toBeCloseTo(partiallySlowResistant.speed * 0.75, 5);
+  });
+
+  it('fully immunizes a monster with maximum slow resistance', () => {
+    const towers = [tower({ typeId: 'slow' })];
+    const sim = new DefenseSimulation(
+      towers,
+      wave(lane([{ type: 'slow-resistant' }])),
+      100,
+      monsterCatalog,
+      towerCatalog,
+      1,
+    );
+
+    sim.step();
+    const [monster] = sim.getMonsters();
+
+    expect(monster.distance).toBeCloseTo(slowResistant.speed, 5);
+  });
+
+  it('replaces a monster with splitOnDeath by its children when killed', () => {
+    const towers = [tower({ typeId: 'strong' })];
+    const sim = new DefenseSimulation(
+      towers,
+      wave(lane([{ type: 'splitter' }])),
+      100,
+      monsterCatalog,
+      towerCatalog,
+      1,
+    );
+
+    sim.step(); // strong tower (damage 1000) kills the splitter on the tick it spawns
+
+    const monsters = sim.getMonsters();
+    expect(monsters).toHaveLength(2);
+    expect(monsters.every((monster) => monster.typeId === 'split-child')).toBe(true);
+    expect(monsters.every((monster) => monster.hp === splitChild.hp)).toBe(true);
+  });
+
+  describe('spawn gap proportional to monster speed', () => {
+    const fast: MonsterType = {
+      id: 'fast',
+      name: 'Fast',
+      description: '',
+      cost: 1,
+      hp: 1000,
+      speed: 0.5,
+      armored: false,
+      chateauDamage: 1,
+    };
+    const slow: MonsterType = {
+      id: 'slow',
+      name: 'Slow',
+      description: '',
+      cost: 1,
+      hp: 1000,
+      speed: 0.25,
+      armored: false,
+      chateauDamage: 1,
+    };
+    const speedCatalog: MonsterType[] = [fast, slow];
+
+    function tickOfSecondSpawn(typeId: string, catalog: readonly MonsterType[] = speedCatalog): number {
+      const sim = new DefenseSimulation(
+        [],
+        wave(lane([{ type: typeId }, { type: typeId }])),
+        1000,
+        catalog,
+        towerCatalog,
+        8,
+      );
+      let tick = 0;
+      while (sim.getMonsters().length < 2 && tick < 200) {
+        sim.step();
+        tick++;
+      }
+      return tick;
+    }
+
+    it('spawns a monster twice as fast in half the ticks of one at half the speed', () => {
+      const fastGap = tickOfSecondSpawn('fast');
+      const slowGap = tickOfSecondSpawn('slow');
+
+      expect(slowGap).toBe(fastGap * 2);
+    });
+
+    it('never gates a spawn to less than one tick apart, however fast the monster', () => {
+      // speed 5 makes the raw gap (ticksBetweenSpawns * referenceSpeed / speed = 8*0.25/5 = 0.4)
+      // round down to 0 ticks without the floor: the long path keeps both monsters on the board
+      // long enough to observe that the floor of 1 tick is actually enforced.
+      const veryFast: MonsterType = { ...fast, id: 'very-fast', speed: 5 };
+      const longPath: MapPath = { id: 'long', nodes: [[0, 0], [1000, 0]] };
+      const sim = new DefenseSimulation(
+        [],
+        wave(lane([{ type: 'very-fast' }, { type: 'very-fast' }], longPath)),
+        1000,
+        [veryFast],
+        towerCatalog,
+        8,
+      );
+
+      sim.step();
+      sim.step();
+
+      expect(sim.getMonsters()).toHaveLength(2);
+    });
   });
 
   describe('getShotsThisTick', () => {

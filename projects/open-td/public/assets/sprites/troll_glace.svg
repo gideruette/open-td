@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="skin" cx="35%" cy="26%" r="72%">
+      <stop offset="0%" stop-color="#d8f2fa"/>
+      <stop offset="100%" stop-color="#3a6a82"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#bdefff"/>
+      <stop offset="100%" stop-color="#2a7ca8"/>
+    </radialGradient>
+  </defs>
+  <polygon points="8,20 20,8 18,26" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="1.2"/>
+  <polygon points="56,20 44,8 46,26" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="1.2"/>
+  <circle cx="32" cy="34" r="26" fill="url(#skin)" stroke="#20404e" stroke-width="1.8"/>
+  <circle cx="32" cy="34" r="26" fill="url(#gloss)"/>
+  <path d="M16 24 Q32 16 48 24 L44 28 Q32 22 20 28 Z" fill="#20404e" opacity="0.4"/>
+  <circle cx="23" cy="31" r="4.6" fill="url(#glow)"/>
+  <circle cx="41" cy="31" r="4.6" fill="url(#glow)"/>
+  <circle cx="23" cy="31" r="1.8" fill="#0e2028"/>
+  <circle cx="41" cy="31" r="1.8" fill="#0e2028"/>
+  <path d="M20 44 Q32 50 44 44" stroke="#20404e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <polygon points="24,46 20,56 27,48" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
+  <polygon points="40,46 44,56 37,48" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
+  <polygon points="32,4 34,12 30,12" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="0.8"/>
+</svg>

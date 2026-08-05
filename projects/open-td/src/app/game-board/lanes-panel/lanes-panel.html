@@ -7,7 +7,7 @@
     class="lane-card__name"
     [value]="selected.path.name || laneDisplayLabel(selected, index)"
     [attr.aria-label]="'Nom de la voie ' + (index + 1)"
-    (change)="laneRename.emit(nameInput.value)"
+    (change)="renameLane(nameInput.value)"
   />
 
   @let unitIndex = selectedUnitIndex();

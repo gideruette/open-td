@@ -1,4 +1,4 @@
-import type { GameMap, GridCoord, MapPath, TowerInstance } from 'shared';
+import type { GameMap, GridCoord, MapPath, MapSpawn, TowerInstance } from 'shared';
 import { hexDistance, hexLinedraw, hexToWorld } from 'shared';
 import { isWithinGrid } from './fortress';
 
@@ -65,6 +65,30 @@ export function pointAtDistance(path: MapPath, distance: number): GridCoord {
 
 export function isSpawnCell(map: GameMap, coord: GridCoord): boolean {
   return map.spawns.some((spawn) => spawn.x === coord.x && spawn.y === coord.y);
+}
+
+/**
+ * Ajoute un spawn à la carte (nouvelle carte, sans mutation) : un nouveau point d'entrée
+ * créé par le joueur en bord de grille devient persistant, au même titre qu'un spawn
+ * prédéfini (CONCEPTION.md §5.3).
+ */
+export function addMapSpawn(map: GameMap, spawn: MapSpawn): GameMap {
+  return { ...map, spawns: [...map.spawns, spawn] };
+}
+
+/**
+ * Vrai si au moins une case de `cells` n'appartient à aucun des `paths` donnés : une voie
+ * dont toutes les cases chevauchent déjà une autre voie n'apporte rien de nouveau
+ * (CONCEPTION.md §5.3).
+ */
+export function hasUniqueCell(cells: readonly GridCoord[], paths: readonly MapPath[]): boolean {
+  const covered = new Set<string>();
+  for (const path of paths) {
+    for (const cell of expandPathCells(path)) {
+      covered.add(`${cell.x},${cell.y}`);
+    }
+  }
+  return cells.some((cell) => !covered.has(`${cell.x},${cell.y}`));
 }
 
 /**

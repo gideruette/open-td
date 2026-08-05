@@ -12,9 +12,6 @@
     <span class="board-status__title">
       Palier {{ palier() }} · {{ phase() === 'defense' ? 'Défense' : 'Attaque' }}
     </span>
-    @if (phase() === 'defense') {
-      <span class="board-status__meta">{{ describeWave(vagueCourante()) }}</span>
-    }
     <span class="board-status__budget">
       <img
         class="board-status__budget-icon"
@@ -30,7 +27,7 @@
   </div>
 
   <div class="board-status__actions">
-    <otd-board-reset [disabled]="trialRunning()" [label]="resetLabel()" (confirm)="reset.emit()" />
+    <otd-board-reset [disabled]="trialRunning()" [label]="resetLabel()" (confirm)="onReset()" />
     <otd-board-launch />
   </div>
 </header>

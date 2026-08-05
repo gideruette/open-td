@@ -4,6 +4,7 @@ import type {
   GamePhase,
   GridCoord,
   MapPath,
+  MapSpawn,
   PlacementResult,
   StartingData,
   TowerInstance,
@@ -12,7 +13,7 @@ import type {
 import { findTowerType, TOWER_TYPES } from 'shared';
 import { DefenseSimulation, waveCost } from './combat';
 import { canOccupyCell, canPlaceTower, removeTower, spentBudget } from './fortress';
-import { addMapPath, removeMapPath } from './path';
+import { addMapPath, addMapSpawn, removeMapPath } from './path';
 
 /**
  * Moteur de jeu pur (sans DOM) : état complet d'une run (forteresse, budgets,
@@ -87,6 +88,17 @@ export class GameEngine {
       return;
     }
     this.map = addMapPath(this.map, path);
+  }
+
+  /**
+   * Ajoute un nouveau spawn (typiquement créé par le joueur en bord de grille pendant un tracé
+   * libre) à la carte : il devient persistant, au même titre qu'un spawn prédéfini.
+   */
+  addSpawn(spawn: MapSpawn): void {
+    if (!this.map) {
+      return;
+    }
+    this.map = addMapSpawn(this.map, spawn);
   }
 
   getPhase(): GamePhase {

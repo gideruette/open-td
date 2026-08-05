@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="skin" cx="35%" cy="26%" r="70%">
+      <stop offset="0%" stop-color="#aab4bc"/>
+      <stop offset="100%" stop-color="#3c4650"/>
+    </radialGradient>
+    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <polygon points="12,18 24,10 22,28" fill="#7d8890" stroke="#252b30" stroke-width="1.4"/>
+  <polygon points="52,18 40,10 42,28" fill="#7d8890" stroke="#252b30" stroke-width="1.4"/>
+  <circle cx="32" cy="34" r="23" fill="url(#skin)" stroke="#20262c" stroke-width="1.6"/>
+  <circle cx="32" cy="34" r="23" fill="url(#gloss)"/>
+  <path d="M17 26 Q32 18 47 26 L43 30 Q32 24 21 30 Z" fill="#252b30" opacity="0.5"/>
+  <circle cx="23" cy="32" r="4.2" fill="#e8d97a"/>
+  <circle cx="41" cy="32" r="4.2" fill="#e8d97a"/>
+  <circle cx="23" cy="32" r="2" fill="#1a1a1a"/>
+  <circle cx="41" cy="32" r="2" fill="#1a1a1a"/>
+  <path d="M14 44 Q32 40 50 44 L46 52 Q32 47 18 52 Z" fill="#e8ecec"/>
+  <path d="M20 46 Q32 43 44 46 L41 50 Q32 47 23 50 Z" fill="#3c4650" opacity="0.4"/>
+  <polygon points="22,52 20,58 26,53" fill="#f4f4f0"/>
+  <polygon points="42,52 44,58 38,53" fill="#f4f4f0"/>
+</svg>

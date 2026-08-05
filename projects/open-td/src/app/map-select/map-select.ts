@@ -1,5 +1,8 @@
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, output } from '@angular/core';
+import { DateTime } from 'luxon';
 import { BIOME_COLORS, MAP_CATALOG, type MapCatalogEntry } from 'shared';
+import { BUILD_DATE } from '../build-info';
 
 /** Taille max (px) du plus grand côté de la vignette de dimensions d'une carte. */
 const PREVIEW_MAX_SIDE = 96;
@@ -7,13 +10,14 @@ const PREVIEW_MAX_SIDE = 96;
 /** Écran d'accueil : choix de la carte de départ parmi le catalogue (CONCEPTION.md §9). */
 @Component({
   selector: 'otd-map-select',
-  imports: [],
+  imports: [DatePipe],
   templateUrl: './map-select.html',
   styleUrl: './map-select.scss',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class MapSelect {
   protected readonly maps = MAP_CATALOG;
+  protected readonly buildDate = DateTime.fromISO(BUILD_DATE).toJSDate();
 
   readonly mapChosen = output<string>();
 

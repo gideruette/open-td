@@ -5,6 +5,7 @@ import type {
   TowerInstance,
   TowerType,
 } from 'shared';
+import { expandPathCells } from './path';
 
 function sameCoord(a: GridCoord, b: GridCoord): boolean {
   return a.x === b.x && a.y === b.y;
@@ -25,6 +26,13 @@ export function isBorderCell(map: GameMap, coord: GridCoord): boolean {
     coord.y === 0 ||
     coord.x === map.grid.cols - 1 ||
     coord.y === map.grid.rows - 1
+  );
+}
+
+/** Une case traversée par un chemin (prédéfini ou tracé) : jamais constructible. */
+export function isPathCell(map: GameMap, coord: GridCoord): boolean {
+  return map.paths.some((path) =>
+    expandPathCells(path).some((cell) => sameCoord(cell, coord)),
   );
 }
 
@@ -67,6 +75,9 @@ export function canOccupyCell(
   }
   if (isBorderCell(map, coord)) {
     return { ok: false, reason: 'border-cell' };
+  }
+  if (isPathCell(map, coord)) {
+    return { ok: false, reason: 'path-cell' };
   }
   if (findTowerAt(towers, coord)) {
     return { ok: false, reason: 'occupied' };

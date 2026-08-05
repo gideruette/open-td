@@ -3,8 +3,10 @@ import type { GameMap, MapPath, TowerInstance } from 'shared';
 import { hexToWorld } from 'shared';
 import {
   addMapPath,
+  addMapSpawn,
   cellsBetween,
   expandPathCells,
+  hasUniqueCell,
   isAdjacentCell,
   isSpawnCell,
   isValidPathStep,
@@ -180,6 +182,39 @@ describe('isSpawnCell', () => {
 
   it('is false elsewhere', () => {
     expect(isSpawnCell(tracingMap, { x: 1, y: 0 })).toBe(false);
+  });
+});
+
+describe('addMapSpawn', () => {
+  it('appends the spawn and keeps the existing ones', () => {
+    const updated = addMapSpawn(tracingMap, { id: 's2', x: 4, y: 0 });
+    expect(updated.spawns).toEqual([{ id: 's1', x: 0, y: 0 }, { id: 's2', x: 4, y: 0 }]);
+  });
+
+  it('does not mutate the original map', () => {
+    addMapSpawn(tracingMap, { id: 's2', x: 4, y: 0 });
+    expect(tracingMap.spawns).toEqual([{ id: 's1', x: 0, y: 0 }]);
+  });
+});
+
+describe('hasUniqueCell', () => {
+  it('is true when no other path exists yet', () => {
+    expect(hasUniqueCell(expandPathCells(straightPath), [])).toBe(true);
+  });
+
+  it('is true when at least one cell of the candidate path is uncovered', () => {
+    const covering: MapPath = { id: 'covering', nodes: [[0, 0], [2, 0]] };
+    expect(hasUniqueCell(expandPathCells(straightPath), [covering])).toBe(true);
+  });
+
+  it('is false when every cell of the candidate path is already covered', () => {
+    expect(hasUniqueCell(expandPathCells(straightPath), [straightPath])).toBe(false);
+  });
+
+  it('is false when the candidate path is covered by the union of several paths', () => {
+    const left: MapPath = { id: 'left', nodes: [[0, 0], [2, 0]] };
+    const right: MapPath = { id: 'right', nodes: [[2, 0], [4, 0]] };
+    expect(hasUniqueCell(expandPathCells(straightPath), [left, right])).toBe(false);
   });
 });
 

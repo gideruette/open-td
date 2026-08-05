@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { GameMap, MapPath, StartingData, Wave, WaveLane, WaveUnit } from 'shared';
+import type { GameMap, MapPath, MapSpawn, StartingData, Wave, WaveLane, WaveUnit } from 'shared';
 import { GameEngine } from './engine';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 3], [3, 3]] };
@@ -462,6 +462,36 @@ describe('GameEngine', () => {
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
 
       expect(engine.getMap()?.paths).toEqual([p1, p2, custom]);
+    });
+  });
+
+  describe('addSpawn', () => {
+    const spawn: MapSpawn = { id: 'spawn-0', x: 3, y: 0 };
+
+    it('appends a spawn, keeping the existing ones', () => {
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+
+      engine.addSpawn(spawn);
+
+      expect(engine.getMap()?.spawns).toEqual([{ id: 's1', x: 0, y: 3 }, spawn]);
+    });
+
+    it('is a no-op before a run is started', () => {
+      const engine = new GameEngine();
+      engine.addSpawn(spawn);
+
+      expect(engine.getMap()).toBeUndefined();
+    });
+
+    it('survives the defense-to-attack transition', () => {
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+
+      engine.addSpawn(spawn);
+      engine.resolveDefenseSuccess();
+
+      expect(engine.getMap()?.spawns).toEqual([{ id: 's1', x: 0, y: 3 }, spawn]);
     });
   });
 

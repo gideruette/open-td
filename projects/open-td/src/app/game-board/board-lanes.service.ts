@@ -1,0 +1,352 @@
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { cellsBetween, hasUniqueCell, isBorderCell, isChateauCell, isSpawnCell, isValidPathStep } from 'engine';
+import { findMonsterType } from 'shared';
+import type { GridCoord, MapPath, MapSpawn, Wave } from 'shared';
+import { BoardBudgetService } from './board-budget.service';
+import { BoardEngineService } from './board-engine.service';
+import { BoardMessageService } from './board-message.service';
+import { BoardTrialService } from './board-trial.service';
+import type { BoardTool, LaneDraft } from './board-types';
+
+/** Position d'insertion d'un nouveau monstre dans la file (curseur) + type ajouté. */
+export interface MonsterAppendEvent {
+  typeId: string;
+  atIndex: number;
+}
+
+/**
+ * Phase Attaque : composition des voies (tracé libre, files de monstres) et outil de canvas actif
+ * (Main vs Éditer). Segment "composition d'attaque" — injecté directement dans `BoardHud` et
+ * `LanesPanel` plutôt que relayé en props par `GameBoard`.
+ */
+@Injectable()
+export class BoardLanesService {
+  private readonly gameState = inject(BoardEngineService);
+  private readonly budget = inject(BoardBudgetService);
+  private readonly messages = inject(BoardMessageService);
+  private readonly trial = inject(BoardTrialService);
+
+  private customLaneSequence = 0;
+  private customSpawnSequence = 0;
+
+  private readonly lanesState = signal<LaneDraft[]>([]);
+  private readonly activeLaneIndexState = signal<number | undefined>(undefined);
+  /** Points déjà cliqués du tracé en cours ; `undefined` = pas en train de tracer. */
+  private readonly drawingPathState = signal<GridCoord[] | undefined>(undefined);
+  /** Main (pan) tant qu'aucun tracé n'est actif. */
+  private readonly boardToolState = signal<BoardTool>('pan');
+
+  readonly lanes = this.lanesState.asReadonly();
+  readonly activeLaneIndex = this.activeLaneIndexState.asReadonly();
+  readonly drawingPath = this.drawingPathState.asReadonly();
+  readonly boardTool = this.boardToolState.asReadonly();
+
+  readonly activeLane = computed(() => {
+    const index = this.activeLaneIndexState();
+    return index === undefined ? undefined : this.lanesState()[index];
+  });
+  readonly isDrawingPath = computed(() => this.drawingPathState() !== undefined);
+
+  /**
+   * Démarre le tracé libre d'une nouvelle voie : le prochain clic doit tomber sur un spawn
+   * existant, ou sur une case de bord pour en créer un nouveau (jamais présélectionné, même
+   * avec un seul spawn sur la carte, pour ne pas confondre ce choix avec la suite du tracé).
+   */
+  startTracing(): void {
+    if (this.gameState.phase() !== 'attack' || this.trial.isRunning()) {
+      return;
+    }
+    this.boardToolState.set('edit');
+    this.drawingPathState.set([]);
+    this.messages.set('Touchez un spawn, ou une case de bord pour en créer un nouveau.');
+  }
+
+  cancelTracing(): void {
+    this.drawingPathState.set(undefined);
+    this.boardToolState.set('pan');
+    this.messages.set(undefined);
+  }
+
+  /** Revient à l'outil Main (utilisé quand une épreuve démarre ou qu'une session se réinitialise). */
+  setPanTool(): void {
+    this.boardToolState.set('pan');
+  }
+
+  undoLastTracePoint(): void {
+    this.drawingPathState.update((path) => (path && path.length > 0 ? path.slice(0, -1) : path));
+  }
+
+  selectLane(index: number): void {
+    if (this.trial.isRunning() || this.isDrawingPath()) {
+      return;
+    }
+    this.activeLaneIndexState.set(index);
+  }
+
+  /** Supprime une voie : son tracé disparaît aussi de la carte (plus de référence fantôme au dessin). Sélectionne
+   * la voie qui prend sa place, s'il y en a une, pour que le détail affiché dans le HUD reste renseigné. */
+  removeLane(index: number): void {
+    if (this.trial.isRunning()) {
+      return;
+    }
+    const lane = this.lanesState()[index];
+    if (!lane) {
+      return;
+    }
+    this.gameState.engine.removePath(lane.path.id);
+    this.lanesState.update((lanes) => lanes.filter((_, i) => i !== index));
+    if (this.activeLaneIndexState() === index) {
+      const remaining = this.lanesState().length;
+      this.activeLaneIndexState.set(remaining === 0 ? undefined : Math.min(index, remaining - 1));
+    } else if ((this.activeLaneIndexState() ?? -1) > index) {
+      this.activeLaneIndexState.update((current) => (current === undefined ? undefined : current - 1));
+    }
+    this.gameState.refresh();
+    this.refreshAttackBudget();
+  }
+
+  /** Renomme une voie ; nom vide = retour à l'étiquette par défaut. */
+  renameLane(index: number, rawName: string): void {
+    const name = rawName.trim();
+    this.lanesState.update((lanes) =>
+      lanes.map((lane, i) =>
+        i === index ? { ...lane, path: { ...lane.path, name: name || undefined } } : lane,
+      ),
+    );
+  }
+
+  renameActiveLane(rawName: string): void {
+    const index = this.activeLaneIndexState();
+    if (index === undefined) {
+      return;
+    }
+    this.renameLane(index, rawName);
+  }
+
+  removeActiveLane(): void {
+    const index = this.activeLaneIndexState();
+    if (index === undefined) {
+      return;
+    }
+    this.removeLane(index);
+  }
+
+  appendMonster(event: MonsterAppendEvent): void {
+    const laneIndex = this.activeLaneIndexState();
+    if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || laneIndex === undefined) {
+      return;
+    }
+    const type = findMonsterType(event.typeId);
+    if (!type || type.cost > this.budget.attack().remaining) {
+      return;
+    }
+    this.lanesState.update((lanes) =>
+      lanes.map((lane, i) => {
+        if (i !== laneIndex) {
+          return lane;
+        }
+        const atIndex = Math.min(Math.max(event.atIndex, 0), lane.units.length);
+        const nextUnits = [...lane.units];
+        nextUnits.splice(atIndex, 0, { type: event.typeId });
+        return { ...lane, units: nextUnits };
+      }),
+    );
+    this.refreshAttackBudget();
+  }
+
+  removeQueueUnit(laneIndex: number, unitIndex: number): void {
+    if (this.trial.isRunning()) {
+      return;
+    }
+    this.lanesState.update((lanes) =>
+      lanes.map((lane, i) =>
+        i === laneIndex ? { ...lane, units: lane.units.filter((_, ui) => ui !== unitIndex) } : lane,
+      ),
+    );
+    this.refreshAttackBudget();
+  }
+
+  moveQueueUnit(laneIndex: number, unitIndex: number, direction: -1 | 1): void {
+    if (this.trial.isRunning()) {
+      return;
+    }
+    this.lanesState.update((lanes) =>
+      lanes.map((lane, i) => {
+        if (i !== laneIndex) {
+          return lane;
+        }
+        const target = unitIndex + direction;
+        if (target < 0 || target >= lane.units.length) {
+          return lane;
+        }
+        const nextUnits = [...lane.units];
+        [nextUnits[unitIndex], nextUnits[target]] = [nextUnits[target], nextUnits[unitIndex]];
+        return { ...lane, units: nextUnits };
+      }),
+    );
+  }
+
+  moveActiveQueueUnit(unitIndex: number, direction: -1 | 1): void {
+    const laneIndex = this.activeLaneIndexState();
+    if (laneIndex === undefined) {
+      return;
+    }
+    this.moveQueueUnit(laneIndex, unitIndex, direction);
+  }
+
+  removeActiveQueueUnit(unitIndex: number): void {
+    const laneIndex = this.activeLaneIndexState();
+    if (laneIndex === undefined) {
+      return;
+    }
+    this.removeQueueUnit(laneIndex, unitIndex);
+  }
+
+  /** Recharge les voies en cours de composition depuis le plan d'attaque sauvegardé par le moteur. */
+  private loadAttackPlan(): LaneDraft[] {
+    return this.gameState.engine.getAttackPlan().lanes.map((lane) => ({
+      path: lane.path,
+      units: lane.units.map((unit) => ({ ...unit })),
+    }));
+  }
+
+  /**
+   * Recharge les voies depuis le plan sauvegardé et sélectionne la voie active choisie par
+   * `pickActiveIndex`, appelé avec les voies rechargées (leur nombre dépend du plan sauvegardé).
+   */
+  applySavedPlan(pickActiveIndex: (lanes: readonly LaneDraft[]) => number | undefined): void {
+    const lanes = this.loadAttackPlan();
+    this.lanesState.set(lanes);
+    this.activeLaneIndexState.set(pickActiveIndex(lanes));
+    this.refreshAttackBudget();
+  }
+
+  /** Abandonne les modifications en cours et revient au plan d'attaque sauvegardé. */
+  resetAttackPlan(): void {
+    if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
+      return;
+    }
+    this.lanesState.set(this.loadAttackPlan());
+    this.activeLaneIndexState.set(undefined);
+    this.messages.set(undefined);
+    this.refreshAttackBudget();
+  }
+
+  toWave(lanes: readonly LaneDraft[]): Wave {
+    return {
+      lanes: lanes.map((lane) => ({
+        path: lane.path,
+        units: lane.units.map((unit) => ({ type: unit.type })),
+      })),
+    };
+  }
+
+  /** Vrai si `coord` tombe sur une case parcourue par `path` (nœuds inclus, segments interpolés). */
+  pathContainsCell(path: MapPath, coord: GridCoord): boolean {
+    const nodes = path.nodes;
+    if (nodes.length === 0) {
+      return false;
+    }
+    const [x0, y0] = nodes[0];
+    if (x0 === coord.x && y0 === coord.y) {
+      return true;
+    }
+    for (let i = 1; i < nodes.length; i++) {
+      const [ax, ay] = nodes[i - 1];
+      const [bx, by] = nodes[i];
+      if (
+        cellsBetween({ x: ax, y: ay }, { x: bx, y: by }).some(
+          (cell) => cell.x === coord.x && cell.y === coord.y,
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Avance le tracé libre en cours d'une case tapée (comble automatiquement les cases traversées). */
+  handleTracingClick(coord: GridCoord): void {
+    const map = this.gameState.map();
+    const path = this.drawingPathState();
+    if (!map || !path) {
+      return;
+    }
+
+    if (path.length === 0) {
+      if (isSpawnCell(map, coord)) {
+        this.drawingPathState.set([coord]);
+        this.messages.set('Cliquez des cases adjacentes jusqu’au château.');
+        return;
+      }
+      if (isBorderCell(map, coord) && !isChateauCell(map, coord)) {
+        const spawn: MapSpawn = { id: `spawn-${this.customSpawnSequence++}`, x: coord.x, y: coord.y };
+        this.gameState.engine.addSpawn(spawn);
+        this.gameState.refresh();
+        this.drawingPathState.set([coord]);
+        this.messages.set('Nouveau spawn créé. Cliquez des cases adjacentes jusqu’au château.');
+        return;
+      }
+      this.messages.set('Le tracé doit démarrer sur une case de spawn ou une case de bord.');
+      return;
+    }
+
+    const last = path[path.length - 1];
+    if (last.x === coord.x && last.y === coord.y) {
+      return;
+    }
+
+    // Case non adjacente : on comble automatiquement les cases traversées (CONCEPTION.md §5.3).
+    const steps = cellsBetween(last, coord);
+    const filledCells: GridCoord[] = [];
+    let cursor = last;
+    let reachedChateau = false;
+    for (const step of steps) {
+      if (!isValidPathStep(map, this.gameState.towers(), cursor, step)) {
+        this.messages.set('Case invalide : doit être dans la grille et libre de tour.');
+        return;
+      }
+      filledCells.push(step);
+      cursor = step;
+      if (isChateauCell(map, step)) {
+        reachedChateau = true;
+        break;
+      }
+    }
+
+    const nextPath = [...path, ...filledCells];
+    if (reachedChateau) {
+      const existingPaths = this.lanesState().map((lane) => lane.path);
+      if (!hasUniqueCell(nextPath, existingPaths)) {
+        this.messages.set(
+          'Cette voie chevauche entièrement une autre : annulez le dernier point et changez d’itinéraire.',
+        );
+        return;
+      }
+      const newPath: MapPath = {
+        id: `custom-${this.customLaneSequence++}`,
+        nodes: nextPath.map((p) => [p.x, p.y]),
+      };
+      const newLane: LaneDraft = { path: newPath, units: [] };
+      this.gameState.engine.addPath(newLane.path);
+      const insertAt = this.lanesState().length;
+      this.lanesState.update((lanes) => [...lanes, newLane]);
+      this.activeLaneIndexState.set(insertAt);
+      this.drawingPathState.set(undefined);
+      this.boardToolState.set('pan');
+      this.messages.set(undefined);
+      this.gameState.refresh();
+      this.refreshAttackBudget();
+      return;
+    }
+    this.drawingPathState.set(nextPath);
+  }
+
+  /** Recalcule le budget d'attaque restant (dépend de la composition des voies en cours). */
+  refreshAttackBudget(): void {
+    this.budget.setAttackBudget(
+      this.gameState.engine.getAttackBudgetRemaining(this.toWave(this.lanesState())),
+      this.gameState.engine.getAttackBudget(),
+    );
+  }
+}

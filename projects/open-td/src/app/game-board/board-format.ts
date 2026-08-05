@@ -47,21 +47,3 @@ export function monsterDescription(typeId: string): string {
 export function laneDisplayLabel(lane: LaneDraft, index: number): string {
   return lane.path.name?.trim() || `Voie ${index + 1}`;
 }
-
-export function describeWave(wave: Wave | undefined): string {
-  if (!wave || wave.lanes.every((lane) => lane.units.length === 0)) {
-    return '—';
-  }
-  return wave.lanes
-    .map((lane, index) => {
-      const counts = new Map<string, number>();
-      for (const unit of lane.units) {
-        counts.set(unit.type, (counts.get(unit.type) ?? 0) + 1);
-      }
-      const parts = Array.from(counts.entries()).map(
-        ([type, count]) => `${findMonsterType(type)?.name ?? type} ×${count}`,
-      );
-      return `Chemin ${index + 1} (${lane.path.id}) : ${parts.join(', ') || 'vide'}`;
-    })
-    .join(' | ');
-}

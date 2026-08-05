@@ -35,7 +35,10 @@ export function selectTarget(
  * Le budget/`chateauHp` d'une carte doit rester à ce niveau ou en dessous : une défense
  * absente ou inefficace doit pouvoir détruire le château (voir CONCEPTION.md §4, §6).
  */
-export function totalChateauDamage(wave: Wave, monsterCatalog: readonly MonsterType[] = MONSTER_TYPES): number {
+export function totalChateauDamage(
+  wave: Wave,
+  monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
+): number {
   return wave.lanes.reduce(
     (total, lane) =>
       total +
@@ -48,7 +51,10 @@ export function totalChateauDamage(wave: Wave, monsterCatalog: readonly MonsterT
 }
 
 /** Coût total (budget d'attaque) d'une vague, toutes voies confondues (CONCEPTION.md §5.1). */
-export function waveCost(wave: Wave, monsterCatalog: readonly MonsterType[] = MONSTER_TYPES): number {
+export function waveCost(
+  wave: Wave,
+  monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
+): number {
   return wave.lanes.reduce(
     (total, lane) =>
       total +
@@ -98,11 +104,14 @@ interface LaneState {
   path: MapPath;
   pathTotalLength: number;
   spawnQueue: string[];
-  ticksSinceLastSpawn: number;
+  /** Progression continue vers le prochain spawn, en unités de `spawnThreshold` (voir `spawn()`). */
+  spawnProgress: number;
 }
 
 const DEFAULT_TICKS_BETWEEN_SPAWNS = 5;
 const DEFAULT_MAX_TICKS = 20_000;
+/** Vitesse à laquelle `ticksBetweenSpawns` s'applique telle quelle (calibrée sur le Gobelin). */
+const SPAWN_GAP_REFERENCE_SPEED = 0.25;
 
 /**
  * Simulation déterministe, tick par tick, d'une épreuve (défense ou attaque) : la vague
@@ -134,7 +143,7 @@ export class DefenseSimulation {
       path: lane.path,
       pathTotalLength: pathLength(lane.path),
       spawnQueue: lane.units.map((unit) => unit.type),
-      ticksSinceLastSpawn: 0,
+      spawnProgress: 0,
     }));
     this.chateauHp = chateauMaxHp;
     for (const tower of towers) {
@@ -180,6 +189,7 @@ export class DefenseSimulation {
     this.tick++;
     this.shotsThisTick = [];
     this.spawn();
+    this.regenerate();
     this.fireTowers();
     this.moveMonsters();
     this.resolveOutcome();
@@ -198,16 +208,41 @@ export class DefenseSimulation {
     return this.outcome;
   }
 
+  /** Régénération passive (ex. Nécrophage) : plafonnée aux PV max du type, appliquée avant les tirs du tick. */
+  private regenerate(): void {
+    for (const monster of this.monsters) {
+      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+      if (type?.regenPerTick) {
+        monster.hp = Math.min(type.hp, monster.hp + type.regenPerTick);
+      }
+    }
+  }
+
+  /**
+   * Fait spawn le prochain monstre de chaque voie une fois sa progression accumulée : chaque tick
+   * ajoute la vitesse du monstre en tête de file (aucun arrondi, contrairement à `moveMonsters()`
+   * qui accumule déjà `distance` de la même façon sans le quantifier). Une unité deux fois plus
+   * rapide que la référence (`SPAWN_GAP_REFERENCE_SPEED`) spawn donc deux fois plus dense (effet de
+   * masse), une unité deux fois plus lente spawn deux fois plus espacée — de façon continue, pas
+   * bornée aux multiples entiers de tick.
+   */
   private spawn(): void {
+    const spawnThreshold = this.ticksBetweenSpawns * SPAWN_GAP_REFERENCE_SPEED;
     for (let laneIndex = 0; laneIndex < this.lanes.length; laneIndex++) {
       const lane = this.lanes[laneIndex];
-      lane.ticksSinceLastSpawn++;
-      if (lane.spawnQueue.length === 0 || lane.ticksSinceLastSpawn < this.ticksBetweenSpawns) {
+      if (lane.spawnQueue.length === 0) {
         continue;
       }
-      lane.ticksSinceLastSpawn = 0;
+      const nextType = this.monsterCatalog.find((candidate) => candidate.id === lane.spawnQueue[0]);
+      lane.spawnProgress += nextType && nextType.speed > 0 ? nextType.speed : SPAWN_GAP_REFERENCE_SPEED;
+      if (lane.spawnProgress < spawnThreshold) {
+        continue;
+      }
+      lane.spawnProgress -= spawnThreshold;
       const typeId = lane.spawnQueue.shift();
-      const type = typeId ? this.monsterCatalog.find((candidate) => candidate.id === typeId) : undefined;
+      const type = typeId
+        ? this.monsterCatalog.find((candidate) => candidate.id === typeId)
+        : undefined;
       if (!type) {
         continue;
       }
@@ -258,7 +293,37 @@ export class DefenseSimulation {
       }
       this.towerCooldowns.set(tower.id, towerType.cooldown);
     }
-    this.monsters = this.monsters.filter((monster) => monster.hp > 0);
+    this.resolveDeaths();
+  }
+
+  /** Retire les monstres achevés ce tick ; ceux à scission (ex. Gelée) sont remplacés par leur progéniture. */
+  private resolveDeaths(): void {
+    const survivors: MonsterInstance[] = [];
+    const spawned: MonsterInstance[] = [];
+    for (const monster of this.monsters) {
+      if (monster.hp > 0) {
+        survivors.push(monster);
+        continue;
+      }
+      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+      const childType = type?.splitOnDeath
+        ? this.monsterCatalog.find((candidate) => candidate.id === type.splitOnDeath!.typeId)
+        : undefined;
+      if (type?.splitOnDeath && childType) {
+        for (let i = 0; i < type.splitOnDeath.count; i++) {
+          spawned.push({
+            id: `monster-${this.monsterSequence++}`,
+            typeId: childType.id,
+            hp: childType.hp,
+            distance: monster.distance,
+            laneIndex: monster.laneIndex,
+            slowMultiplier: 1,
+            slowUntilTick: 0,
+          });
+        }
+      }
+    }
+    this.monsters = [...survivors, ...spawned];
   }
 
   private applyDamage(monster: MonsterInstance, towerType: TowerType): void {
@@ -266,7 +331,8 @@ export class DefenseSimulation {
     const armorMultiplier = towerType.armorBonus && monsterType?.armored ? towerType.armorBonus : 1;
     monster.hp -= towerType.damage * armorMultiplier;
     if (towerType.slowFactor && towerType.slowDuration) {
-      monster.slowMultiplier = towerType.slowFactor;
+      const resistance = monsterType?.slowResistance ?? 0;
+      monster.slowMultiplier = Math.min(1, towerType.slowFactor + (1 - towerType.slowFactor) * resistance);
       monster.slowUntilTick = this.tick + towerType.slowDuration;
     }
   }

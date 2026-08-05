@@ -1,26 +1,14 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  input,
-  output,
-  signal,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { MONSTER_TYPES } from 'shared';
 import type { MonsterType } from 'shared';
 import { Button } from '../../ui/button/button';
 import { ItemButton } from '../../ui/item-button/item-button';
+import { BoardBudgetService } from '../board-budget.service';
 import { laneDisplayLabel, monsterDescription, monsterDisplayName } from '../board-format';
-import type { LaneDraft } from '../board-types';
+import { BoardLanesService } from '../board-lanes.service';
+import { BoardTrialService } from '../board-trial.service';
 
-/** Position d'insertion d'un nouveau monstre dans la file (curseur) + type ajouté. */
-export interface MonsterAppendEvent {
-  typeId: string;
-  atIndex: number;
-}
-
-/** Détail d'une voie sélectionnée : file de monstres, ajout à la position du curseur, suppression. */
+/** Détail de la voie active : file de monstres, ajout à la position du curseur, suppression. */
 @Component({
   selector: 'otd-lanes-panel',
   imports: [Button, ItemButton],
@@ -29,18 +17,18 @@ export interface MonsterAppendEvent {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LanesPanel {
+  private readonly lanesService = inject(BoardLanesService);
+  private readonly budget = inject(BoardBudgetService);
+  private readonly trial = inject(BoardTrialService);
+
   /** Toujours montée uniquement quand une voie est active (voir board-hud) : file toujours renseignée. */
-  readonly lane = input.required<LaneDraft>();
-  readonly laneIndex = input.required<number>();
-  readonly trialRunning = input(false);
-  readonly attackBudgetRemaining = input(0);
+  protected readonly lane = computed(() => this.lanesService.activeLane()!);
+  protected readonly laneIndex = computed(() => this.lanesService.activeLaneIndex()!);
+  protected readonly trialRunning = this.trial.isRunning;
+  protected readonly attackBudgetRemaining = computed(() => this.budget.attack().remaining);
 
-  readonly laneRename = output<string>();
-  readonly monsterAppend = output<MonsterAppendEvent>();
-  readonly unitMove = output<{ unitIndex: number; delta: -1 | 1 }>();
-  readonly unitRemove = output<number>();
-
-  protected readonly monsterTypes = MONSTER_TYPES;
+  /** Exclut les monstres internes (ex. progéniture d'une scission), non composables directement dans une voie. */
+  protected readonly monsterTypes = MONSTER_TYPES.filter((type) => !type.internal);
   protected readonly laneDisplayLabel = laneDisplayLabel;
   protected readonly monsterDisplayName = monsterDisplayName;
   protected readonly monsterDescription = monsterDescription;
@@ -76,7 +64,7 @@ export class LanesPanel {
 
   protected appendAtCursor(typeId: string): void {
     const atIndex = this.cursorIndex();
-    this.monsterAppend.emit({ typeId, atIndex });
+    this.lanesService.appendMonster({ typeId, atIndex });
     this.rawCursorIndex.set(atIndex + 1);
   }
 
@@ -93,7 +81,7 @@ export class LanesPanel {
     if (target < 0 || target >= this.lane().units.length) {
       return;
     }
-    this.unitMove.emit({ unitIndex, delta: direction });
+    this.lanesService.moveActiveQueueUnit(unitIndex, direction);
     this.rawSelectedUnitIndex.set(target);
   }
 
@@ -102,7 +90,11 @@ export class LanesPanel {
     if (unitIndex === undefined) {
       return;
     }
-    this.unitRemove.emit(unitIndex);
+    this.lanesService.removeActiveQueueUnit(unitIndex);
     this.rawSelectedUnitIndex.set(undefined);
+  }
+
+  protected renameLane(rawName: string): void {
+    this.lanesService.renameActiveLane(rawName);
   }
 }

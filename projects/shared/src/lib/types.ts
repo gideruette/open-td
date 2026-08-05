@@ -56,6 +56,14 @@ export interface MonsterType {
   armored: boolean;
   /** Dégâts infligés au château si le monstre atteint la fin du chemin. */
   chateauDamage: number;
+  /** PV régénérés à chaque tick (jusqu'à `hp`) : impose du burst plutôt que du dégât étalé. */
+  regenPerTick?: number;
+  /** Résistance au ralentissement (0 = aucune, 1 = immunité totale) : atténue le `slowFactor` subi. */
+  slowResistance?: number;
+  /** Scission à la mort : le monstre tué est remplacé par `count` instances du type `typeId`, à sa position. */
+  splitOnDeath?: { typeId: string; count: number };
+  /** Non composable directement dans une voie (ex. progéniture d'une scission) : absent du sélecteur de vague. */
+  internal?: boolean;
 }
 
 /** Raison de rejet d'un placement (ou déplacement) de tour. */
@@ -64,6 +72,7 @@ export type PlacementFailureReason =
   | 'out-of-bounds'
   | 'chateau-cell'
   | 'border-cell'
+  | 'path-cell'
   | 'occupied'
   | 'insufficient-budget'
   | 'unknown-tower-type'
