@@ -91,13 +91,31 @@ export function hasUniqueCell(cells: readonly GridCoord[], paths: readonly MapPa
   return cells.some((cell) => !covered.has(`${cell.x},${cell.y}`));
 }
 
+/** Vrai si `spawn` est le point de départ d'au moins un chemin de `paths` (route reliée). */
+export function isSpawnConnected(spawn: MapSpawn, paths: readonly MapPath[]): boolean {
+  return paths.some(
+    (path) => path.nodes.length > 0 && path.nodes[0][0] === spawn.x && path.nodes[0][1] === spawn.y,
+  );
+}
+
+/**
+ * Retire les spawns qui ne sont plus reliés à aucun chemin (nouvelle carte, sans mutation) :
+ * un point d'entrée abandonné par la dernière route qui en partait n'a plus de raison de
+ * rester affiché (CONCEPTION.md §5.3).
+ */
+export function pruneOrphanSpawns(map: GameMap): GameMap {
+  return { ...map, spawns: map.spawns.filter((spawn) => isSpawnConnected(spawn, map.paths)) };
+}
+
 /**
  * Retire un chemin prédéfini de la carte (nouvelle carte, sans mutation). Les chemins
  * prédéfinis n'ont rien de permanent : le joueur peut en élaguer certains (CONCEPTION.md §5.3) ;
- * ceux qui restent continuent d'apparaître en phases Défense et Attaque.
+ * ceux qui restent continuent d'apparaître en phases Défense et Attaque. Un spawn que ce chemin
+ * laisse sans aucune route reliée disparaît avec lui : un point d'entrée mort n'a plus de raison
+ * de rester affiché.
  */
 export function removeMapPath(map: GameMap, pathId: string): GameMap {
-  return { ...map, paths: map.paths.filter((path) => path.id !== pathId) };
+  return pruneOrphanSpawns({ ...map, paths: map.paths.filter((path) => path.id !== pathId) });
 }
 
 /**

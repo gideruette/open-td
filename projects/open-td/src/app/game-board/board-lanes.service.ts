@@ -65,6 +65,8 @@ export class BoardLanesService {
     this.drawingPathState.set(undefined);
     this.boardToolState.set('pan');
     this.messages.set(undefined);
+    this.gameState.engine.pruneOrphanSpawns();
+    this.gameState.refresh();
   }
 
   /** Revient à l'outil Main (utilisé quand une épreuve démarre ou qu'une session se réinitialise). */
@@ -72,8 +74,15 @@ export class BoardLanesService {
     this.boardToolState.set('pan');
   }
 
+  /** Retire le dernier point cliqué du tracé en cours ; si ça découvre le spawn de départ
+   * (tracé revenu à vide), un spawn nouvellement créé par ce tracé et resté sans route disparaît
+   * avec lui. */
   undoLastTracePoint(): void {
     this.drawingPathState.update((path) => (path && path.length > 0 ? path.slice(0, -1) : path));
+    if (this.drawingPathState()?.length === 0) {
+      this.gameState.engine.pruneOrphanSpawns();
+      this.gameState.refresh();
+    }
   }
 
   selectLane(index: number): void {

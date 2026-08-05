@@ -11,6 +11,7 @@ export interface LaneDraft {
 
 /** Monstre d'une épreuve en cours, tel qu'affiché sur le plateau. */
 export interface MonsterView {
+  id: string;
   position: GridCoord;
   hp: number;
   typeId: string;

@@ -9,9 +9,11 @@ import {
   hasUniqueCell,
   isAdjacentCell,
   isSpawnCell,
+  isSpawnConnected,
   isValidPathStep,
   pathLength,
   pointAtDistance,
+  pruneOrphanSpawns,
   removeMapPath,
 } from './path';
 
@@ -130,6 +132,47 @@ describe('removeMapPath', () => {
   it('is a no-op for an unknown path id', () => {
     const updated = removeMapPath(mapWithPaths, 'missing');
     expect(updated.paths).toEqual(mapWithPaths.paths);
+  });
+
+  it('drops a spawn left with no route once its only path is removed', () => {
+    const secondSpawnPath: MapPath = { id: 'from-s2', nodes: [[3, 0], [4, 4]] };
+    const orphanSpawn = { id: 's2', x: 3, y: 0 };
+    const mapWithOrphanCandidate: GameMap = {
+      ...tracingMap,
+      spawns: [{ id: 's1', x: 0, y: 0 }, orphanSpawn],
+      paths: [straightPath, secondSpawnPath],
+    };
+    const updated = removeMapPath(mapWithOrphanCandidate, 'from-s2');
+    expect(updated.spawns).toEqual([{ id: 's1', x: 0, y: 0 }]);
+  });
+
+  it('keeps a spawn still reachable by another remaining path', () => {
+    const updated = removeMapPath(mapWithPaths, 'straight');
+    expect(updated.spawns).toEqual(mapWithPaths.spawns);
+  });
+});
+
+describe('isSpawnConnected', () => {
+  it('is true when a path starts on the spawn cell', () => {
+    expect(isSpawnConnected({ id: 's1', x: 0, y: 0 }, [straightPath])).toBe(true);
+  });
+
+  it('is false when no path starts on the spawn cell', () => {
+    expect(isSpawnConnected({ id: 's2', x: 9, y: 9 }, [straightPath, bentPath])).toBe(false);
+  });
+});
+
+describe('pruneOrphanSpawns', () => {
+  it('removes spawns with no path starting on them, without mutating the original map', () => {
+    const orphanSpawn = { id: 's2', x: 9, y: 9 };
+    const mapWithOrphan: GameMap = {
+      ...tracingMap,
+      spawns: [{ id: 's1', x: 0, y: 0 }, orphanSpawn],
+      paths: [straightPath],
+    };
+    const updated = pruneOrphanSpawns(mapWithOrphan);
+    expect(updated.spawns).toEqual([{ id: 's1', x: 0, y: 0 }]);
+    expect(mapWithOrphan.spawns).toHaveLength(2);
   });
 });
 

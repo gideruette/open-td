@@ -13,7 +13,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import type { DefenseSimulation } from 'engine';
+import type { DefenseSimulation, MonsterInstance } from 'engine';
 import { cellsBetween, expandPathCells, isBorderCell, isChateauCell, isSpawnCell, selectTarget } from 'engine';
 import {
   BIOME_COLORS,
@@ -28,6 +28,7 @@ import {
 import type { GameMap, GridCoord, MapBiomeColors, TowerInstance, TowerType, Wave } from 'shared';
 import { Tooltip, type TooltipStat } from '../ui/tooltip/tooltip';
 import { BoardBudgetService } from './board-budget.service';
+import type { MonsterView } from './board-types';
 import { BoardDefenseService } from './board-defense.service';
 import { BoardEngineService } from './board-engine.service';
 import { formatMonsterStats, formatTowerStats } from './board-format';
@@ -51,6 +52,16 @@ const ORIGIN_Y = CELL_SIZE + CANVAS_PAD;
 const TICK_INTERVAL_MS = 100;
 const PROJECTILE_DURATION_MS = 120;
 const SPLASH_DURATION_MS = 220;
+/** Durée du flash + recul affiché sur un monstre touché par un projectile. */
+const HIT_EFFECT_DURATION_MS = 180;
+/** Amplitude du recul (pixels) à l'impact, dans le sens du tir. */
+const HIT_RECOIL_PX = CELL_SIZE * 0.22;
+/** Distance en pixels sous laquelle deux monstres sont considérés superposés à l'écran. */
+const CLUSTER_DISTANCE_PX = CELL_SIZE * 0.55;
+/** Rayon du petit cercle sur lequel sont répartis les monstres d'un même amas. */
+const CLUSTER_SPREAD_PX = CELL_SIZE * 0.4;
+/** Vitesse de lissage (0..1) du décalage d'amas d'une frame à l'autre. */
+const CLUSTER_EASE = 0.18;
 /** Zoom minimal (légèrement sous le fit pour pouvoir dézoomer). */
 const VIEW_ZOOM_MIN = 0.75;
 const VIEW_ZOOM_MAX = 3.5;
@@ -186,6 +197,14 @@ interface SplashView {
   firedAtMs: number;
 }
 
+/** Flash + recul bref affiché sur un monstre au moment où un projectile l'atteint. */
+interface HitEffectView {
+  monsterId: string;
+  /** Angle (radians) du tir, tour → cible : direction dans laquelle le monstre recule. */
+  angle: number;
+  firedAtMs: number;
+}
+
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
@@ -219,6 +238,9 @@ export class GameBoard implements OnInit {
   protected readonly decor = signal<readonly DecorItem[]>([]);
   private projectiles: ProjectileView[] = [];
   private splashes: SplashView[] = [];
+  private hitEffects: HitEffectView[] = [];
+  /** Décalage courant (lissé) de chaque monstre pour désempiler les sprites trop proches à l'écran. */
+  private readonly clusterOffsets = new Map<string, GridCoord>();
   /** Dernier angle (radians) auquel chaque tour a visé une cible ; conservé tant qu'aucune cible n'est à portée. */
   private readonly towerFacing = new Map<string, number>();
   private projectileAnimationHandle: number | undefined;
@@ -607,6 +629,14 @@ export class GameBoard implements OnInit {
       );
       if (laneIndex !== -1) {
         this.lanesService.selectLane(laneIndex);
+        return;
+      }
+      // Case sans route existante mais spawn possible (existant ou bord éligible) : démarre
+      // directement un nouveau tracé, sans passer par l'outil « Tracer ».
+      const map = this.map();
+      if (map && (isSpawnCell(map, coord) || (isBorderCell(map, coord) && !isChateauCell(map, coord)))) {
+        this.lanesService.startTracing();
+        this.lanesService.handleTracingClick(coord);
       }
       return;
     }
@@ -697,10 +727,12 @@ export class GameBoard implements OnInit {
       return;
     }
     const running = trial.step();
+    const monsters = trial.getMonsters();
     this.trialService.setChateauHp(trial.getChateauHp());
     this.trialService.setBreachCount(trial.getBreachCount());
     this.trialService.setMonsters(
-      trial.getMonsters().map((monster) => ({
+      monsters.map((monster) => ({
+        id: monster.id,
         position: trial.getMonsterPosition(monster),
         hp: monster.hp,
         typeId: monster.typeId,
@@ -719,12 +751,26 @@ export class GameBoard implements OnInit {
           firedAtMs,
         })),
       );
+      // Le flash + recul apparaît sur le monstre visé à l'impact, une fois le projectile arrivé.
+      const impactAtMs = firedAtMs + PROJECTILE_DURATION_MS;
+      for (const shot of shots) {
+        const targetId = this.findNearestMonsterId(trial, monsters, shot.targetPosition);
+        if (!targetId) {
+          continue;
+        }
+        const towerPx = cellCenterPx(shot.towerPosition);
+        const targetPx = worldToPx(shot.targetPosition);
+        this.hitEffects.push({
+          monsterId: targetId,
+          angle: Math.atan2(targetPx.y - towerPx.y, targetPx.x - towerPx.x),
+          firedAtMs: impactAtMs,
+        });
+      }
       const splashShots = shots.filter((shot): shot is typeof shot & { splashRadius: number } =>
         Boolean(shot.splashRadius),
       );
       if (splashShots.length > 0) {
         // L'explosion apparaît à l'impact, une fois le projectile arrivé sur sa cible.
-        const impactAtMs = firedAtMs + PROJECTILE_DURATION_MS;
         this.splashes.push(
           ...splashShots.map((shot) => ({
             position: worldToPx(shot.targetPosition),
@@ -798,13 +844,133 @@ export class GameBoard implements OnInit {
         (projectile) => now - projectile.firedAtMs < PROJECTILE_DURATION_MS,
       );
       this.splashes = this.splashes.filter((splash) => now - splash.firedAtMs < SPLASH_DURATION_MS);
+      this.hitEffects = this.hitEffects.filter(
+        (effect) => now - effect.firedAtMs < HIT_EFFECT_DURATION_MS,
+      );
       this.draw();
       this.projectileAnimationHandle =
-        this.projectiles.length > 0 || this.splashes.length > 0
+        this.projectiles.length > 0 || this.splashes.length > 0 || this.hitEffects.length > 0
           ? requestAnimationFrame(step)
           : undefined;
     };
     this.projectileAnimationHandle = requestAnimationFrame(step);
+  }
+
+  /** Monstre le plus proche (world-space) de la position visée par un tir, pour lui appliquer le flash d'impact. */
+  private findNearestMonsterId(
+    trial: DefenseSimulation,
+    monsters: readonly MonsterInstance[],
+    target: GridCoord,
+  ): string | undefined {
+    let bestId: string | undefined;
+    let bestDistSq = Infinity;
+    for (const monster of monsters) {
+      const pos = trial.getMonsterPosition(monster);
+      const dx = pos.x - target.x;
+      const dy = pos.y - target.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestId = monster.id;
+      }
+    }
+    return bestId;
+  }
+
+  /** Effet de flash/recul actif sur ce monstre à l'instant `now`, s'il en a un (le plus récent sinon). */
+  private activeHitEffect(monsterId: string, now: number): HitEffectView | undefined {
+    let latest: HitEffectView | undefined;
+    for (const effect of this.hitEffects) {
+      if (effect.monsterId !== monsterId) {
+        continue;
+      }
+      const elapsed = now - effect.firedAtMs;
+      if (elapsed < 0 || elapsed >= HIT_EFFECT_DURATION_MS) {
+        continue;
+      }
+      if (!latest || effect.firedAtMs > latest.firedAtMs) {
+        latest = effect;
+      }
+    }
+    return latest;
+  }
+
+  /**
+   * Recalcule et lisse le décalage de chaque monstre trop proche d'un autre à l'écran, pour les
+   * répartir en petit cercle plutôt que de les superposer (sinon on n'en voit qu'un seul).
+   */
+  private updateClusterOffsets(monsters: readonly MonsterView[]): void {
+    const activeIds = new Set(monsters.map((monster) => monster.id));
+    for (const id of this.clusterOffsets.keys()) {
+      if (!activeIds.has(id)) {
+        this.clusterOffsets.delete(id);
+      }
+    }
+
+    const targets = this.computeClusterTargets(monsters);
+    for (const monster of monsters) {
+      const target = targets.get(monster.id) ?? { x: 0, y: 0 };
+      const current = this.clusterOffsets.get(monster.id) ?? { x: 0, y: 0 };
+      this.clusterOffsets.set(monster.id, {
+        x: current.x + (target.x - current.x) * CLUSTER_EASE,
+        y: current.y + (target.y - current.y) * CLUSTER_EASE,
+      });
+    }
+  }
+
+  /** Groupe les monstres dont les sprites se chevaucheraient à l'écran et leur assigne une position en cercle. */
+  private computeClusterTargets(monsters: readonly MonsterView[]): Map<string, GridCoord> {
+    const points = monsters.map((monster) => ({ id: monster.id, px: worldToPx(monster.position) }));
+    const parent = points.map((_, index) => index);
+    const find = (index: number): number => {
+      while (parent[index] !== index) {
+        index = parent[index];
+      }
+      return index;
+    };
+    for (let i = 0; i < points.length; i++) {
+      for (let j = i + 1; j < points.length; j++) {
+        const dx = points[i].px.x - points[j].px.x;
+        const dy = points[i].px.y - points[j].px.y;
+        if (Math.hypot(dx, dy) < CLUSTER_DISTANCE_PX) {
+          const rootI = find(i);
+          const rootJ = find(j);
+          if (rootI !== rootJ) {
+            parent[rootI] = rootJ;
+          }
+        }
+      }
+    }
+
+    const groups = new Map<number, { id: string; px: GridCoord }[]>();
+    points.forEach((point, index) => {
+      const root = find(index);
+      const group = groups.get(root);
+      if (group) {
+        group.push(point);
+      } else {
+        groups.set(root, [point]);
+      }
+    });
+
+    const targets = new Map<string, GridCoord>();
+    for (const group of groups.values()) {
+      if (group.length < 2) {
+        continue;
+      }
+      // Ordre stable (indépendant de l'ordre d'itération courant) pour éviter les sauts de position.
+      const sorted = [...group].sort((a, b) => a.id.localeCompare(b.id));
+      const centerX = sorted.reduce((sum, point) => sum + point.px.x, 0) / sorted.length;
+      const centerY = sorted.reduce((sum, point) => sum + point.px.y, 0) / sorted.length;
+      sorted.forEach((point, index) => {
+        const angle = (index / sorted.length) * Math.PI * 2;
+        targets.set(point.id, {
+          x: centerX + Math.cos(angle) * CLUSTER_SPREAD_PX - point.px.x,
+          y: centerY + Math.sin(angle) * CLUSTER_SPREAD_PX - point.px.y,
+        });
+      });
+    }
+    return targets;
   }
 
   private async bootstrap(): Promise<void> {
@@ -1260,19 +1426,41 @@ export class GameBoard implements OnInit {
       }
     }
 
+    const now = performance.now();
+    this.updateClusterOffsets(this.trialMonsters());
     for (const monster of this.trialMonsters()) {
-      const { x: cx, y: cy } = worldToPx(monster.position);
+      const base = worldToPx(monster.position);
+      const clusterOffset = this.clusterOffsets.get(monster.id);
+      let cx = base.x + (clusterOffset?.x ?? 0);
+      let cy = base.y + (clusterOffset?.y ?? 0);
+
+      let flashAlpha = 0;
+      const hit = this.activeHitEffect(monster.id, now);
+      if (hit) {
+        const t = (now - hit.firedAtMs) / HIT_EFFECT_DURATION_MS;
+        const recoil = HIT_RECOIL_PX * Math.sin(t * Math.PI);
+        cx += Math.cos(hit.angle) * recoil;
+        cy += Math.sin(hit.angle) * recoil;
+        flashAlpha = (1 - t) * 0.85;
+      }
+
       const maxHp = findMonsterType(monster.typeId)?.hp ?? monster.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, monster.hp / maxHp) : 0;
       const radius = CELL_SIZE * 0.44;
 
       this.drawMonsterShadow(ctx, cx, cy, radius);
 
-      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 1.1)) {
+      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 1.1, flashAlpha)) {
         ctx.fillStyle = '#e0524a';
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.fill();
+        if (flashAlpha > 0) {
+          ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       const barWidth = CELL_SIZE * 0.9;
@@ -1284,7 +1472,6 @@ export class GameBoard implements OnInit {
       ctx.fillRect(barX, barY, barWidth * hpRatio, 3);
     }
 
-    const now = performance.now();
     for (const projectile of this.projectiles) {
       const t = Math.min(1, (now - projectile.firedAtMs) / PROJECTILE_DURATION_MS);
       const alpha = 1 - t;
@@ -1458,19 +1645,33 @@ export class GameBoard implements OnInit {
     return angle;
   }
 
-  /** Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête. */
+  /**
+   * Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête.
+   * `flashAlpha` (0..1) surimpose une teinte blanche sur les pixels non transparents du sprite
+   * (flash d'impact), en respectant sa silhouette grâce à `source-atop`.
+   */
   private drawSprite(
     ctx: CanvasRenderingContext2D,
     id: string,
     cx: number,
     cy: number,
     size: number,
+    flashAlpha = 0,
   ): boolean {
     const image = this.sprites.get(id);
     if (!image || !image.complete || image.naturalWidth === 0) {
       return false;
     }
     ctx.drawImage(image, cx - size / 2, cy - size / 2, size, size);
+    if (flashAlpha > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
     return true;
   }
 

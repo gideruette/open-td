@@ -13,7 +13,7 @@ import type {
 import { findTowerType, TOWER_TYPES } from 'shared';
 import { DefenseSimulation, waveCost } from './combat';
 import { canOccupyCell, canPlaceTower, removeTower, spentBudget } from './fortress';
-import { addMapPath, addMapSpawn, removeMapPath } from './path';
+import { addMapPath, addMapSpawn, pruneOrphanSpawns, removeMapPath } from './path';
 
 /**
  * Moteur de jeu pur (sans DOM) : état complet d'une run (forteresse, budgets,
@@ -99,6 +99,17 @@ export class GameEngine {
       return;
     }
     this.map = addMapSpawn(this.map, spawn);
+  }
+
+  /**
+   * Retire les spawns qui ne sont plus reliés à aucun chemin : utile après l'abandon d'un
+   * tracé libre qui avait créé un nouveau spawn sans jamais le relier au château.
+   */
+  pruneOrphanSpawns(): void {
+    if (!this.map) {
+      return;
+    }
+    this.map = pruneOrphanSpawns(this.map);
   }
 
   getPhase(): GamePhase {

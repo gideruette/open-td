@@ -495,6 +495,26 @@ describe('GameEngine', () => {
     });
   });
 
+  describe('pruneOrphanSpawns', () => {
+    it('removes a spawn no path starts on, keeping spawns still connected', () => {
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+      const orphanSpawn: MapSpawn = { id: 'spawn-orphan', x: 5, y: 5 };
+      engine.addSpawn(orphanSpawn);
+
+      engine.pruneOrphanSpawns();
+
+      expect(engine.getMap()?.spawns).toEqual([{ id: 's1', x: 0, y: 3 }]);
+    });
+
+    it('is a no-op before a run is started', () => {
+      const engine = new GameEngine();
+      engine.pruneOrphanSpawns();
+
+      expect(engine.getMap()).toBeUndefined();
+    });
+  });
+
   describe('getDefenseBudget', () => {
     it('reports the gross defense budget, unaffected by towers already placed', () => {
       const engine = new GameEngine();
