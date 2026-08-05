@@ -40,6 +40,10 @@ export function monsterDisplayName(typeId: string): string {
   return findMonsterType(typeId)?.name ?? typeId;
 }
 
+export function monsterDescription(typeId: string): string {
+  return findMonsterType(typeId)?.description ?? '';
+}
+
 export function laneDisplayLabel(lane: LaneDraft, index: number): string {
   return lane.path.name?.trim() || `Voie ${index + 1}`;
 }

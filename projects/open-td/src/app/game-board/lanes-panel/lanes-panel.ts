@@ -11,7 +11,7 @@ import { MONSTER_TYPES } from 'shared';
 import type { MonsterType } from 'shared';
 import { Button } from '../../ui/button/button';
 import { ItemButton } from '../../ui/item-button/item-button';
-import { formatMonsterStats, laneDisplayLabel, monsterDisplayName } from '../board-format';
+import { laneDisplayLabel, monsterDescription, monsterDisplayName } from '../board-format';
 import type { LaneDraft } from '../board-types';
 
 /** Position d'insertion d'un nouveau monstre dans la file (curseur) + type ajouté. */
@@ -41,9 +41,9 @@ export class LanesPanel {
   readonly unitRemove = output<number>();
 
   protected readonly monsterTypes = MONSTER_TYPES;
-  protected readonly formatMonsterStats = formatMonsterStats;
   protected readonly laneDisplayLabel = laneDisplayLabel;
   protected readonly monsterDisplayName = monsterDisplayName;
+  protected readonly monsterDescription = monsterDescription;
 
   /** Monstre de la file cliqué : tant qu'il est défini, remplace les boutons d'ajout par déplacer/supprimer. */
   private readonly rawSelectedUnitIndex = signal<number | undefined>(undefined);

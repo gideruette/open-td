@@ -19,7 +19,6 @@ export class BoardHud {
   readonly phase = input.required<GamePhase>();
   readonly trialRunning = input(false);
   readonly drawingPath = input(false);
-  readonly breachCount = input(0);
   readonly activeLaneIndex = input<number | undefined>(undefined);
   /** Voie active, dont le détail (file de monstres) reste toujours affiché dans le HUD. */
   readonly activeLane = input<LaneDraft | undefined>(undefined);

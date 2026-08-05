@@ -1,5 +1,5 @@
 <div class="board-hud" role="toolbar" aria-label="Commandes de jeu">
-  @if (phase() === 'attack' && !drawingPath()) {
+  @if (phase() === 'attack' && !drawingPath() && !trialRunning()) {
     <div class="board-hud__lane">
       <div class="board-hud__lane-tabs" role="tablist" aria-label="Voies">
         @for (entry of lanes(); track entry.path.id; let i = $index) {
@@ -67,7 +67,11 @@
             [title]="type.name + ' · ' + type.cost"
             (click)="typeSelect.emit(type.id)"
           >
-            <img class="board-hud__tool-sprite" [src]="'assets/sprites/' + type.id + '.svg'" alt="" />
+            <img
+              class="board-hud__tool-sprite"
+              [src]="'assets/sprites/' + type.id + '.svg'"
+              alt=""
+            />
             <span class="board-hud__tool-cost">{{ type.cost }}</span>
           </button>
         }
@@ -80,12 +84,6 @@
     </div>
   }
 
-  <div class="board-hud__stats">
-    @if (phase() === 'attack' && trialRunning()) {
-      <span class="board-hud__chateau">Brèches {{ breachCount() }}</span>
-    }
-  </div>
-
   @if (pickingActive()) {
     <div class="board-hud__launch">
       @if (pickingHasTower()) {
@@ -93,7 +91,11 @@
           Supprimer
         </otd-button>
       } @else {
-        <otd-button variant="success" [disabled]="!canConfirmPlace()" (clicked)="confirmPlace.emit()">
+        <otd-button
+          variant="success"
+          [disabled]="!canConfirmPlace()"
+          (clicked)="confirmPlace.emit()"
+        >
           Construire
         </otd-button>
       }

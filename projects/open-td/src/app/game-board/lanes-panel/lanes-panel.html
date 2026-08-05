@@ -19,7 +19,10 @@
         (clicked)="moveSelected(-1)"
         ariaLabel="Déplacer vers la gauche"
       >←</otd-button>
-      <span class="queue-toolbar__label">{{ monsterDisplayName(selected.units[unitIndex].type) }}</span>
+      <span class="queue-toolbar__label">
+        <span class="queue-toolbar__name">{{ monsterDisplayName(selected.units[unitIndex].type) }}</span>
+        <span class="queue-toolbar__description">{{ monsterDescription(selected.units[unitIndex].type) }}</span>
+      </span>
       <otd-button
         size="sm"
         [disabled]="trialRunning() || unitIndex === selected.units.length - 1"
@@ -43,8 +46,6 @@
           [spriteSrc]="'assets/sprites/' + type.id + '.svg'"
           [label]="type.name"
           [meta]="'' + type.cost"
-          [description]="type.description"
-          [stats]="formatMonsterStats(type)"
           [disabled]="trialRunning() || !canAfford(type)"
           (clicked)="appendAtCursor(type.id)"
         ></otd-item-button>

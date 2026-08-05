@@ -7,11 +7,11 @@
   position: relative;
   z-index: 25;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    'lane lane lane'
-    'tools stats launch'
-    'message message message';
+    'lane lane'
+    'tools launch'
+    'message message';
   gap: 0.4rem 0.5rem;
   align-items: center;
   min-height: 0;
@@ -174,20 +174,6 @@
   line-height: 1;
 }
 
-.board-hud__stats {
-  grid-area: stats;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.65rem;
-  min-width: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.board-hud__chateau {
-  color: #ff8f7a;
-}
-
 .board-hud__launch {
   grid-area: launch;
 
@@ -204,15 +190,6 @@
 }
 
 @media (max-width: 720px) {
-  .board-hud {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      'lane lane'
-      'tools launch'
-      'stats stats'
-      'message message';
-  }
-
   .board-hud__launch .otd-button {
     width: 100%;
   }

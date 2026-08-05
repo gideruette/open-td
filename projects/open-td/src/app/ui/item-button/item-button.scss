@@ -34,20 +34,6 @@
   }
 }
 
-// Rattachée à <body> (voir item-button.ts) : ne doit jamais introduire de boîte là où elle est déclarée.
-.otd-item-button__tooltip-host {
-  display: contents;
-}
-
-.otd-item-button__tooltip {
-  position: fixed;
-  left: 0;
-  top: 0;
-  transform: translateX(-50%);
-  z-index: 1000;
-  pointer-events: none;
-}
-
 .otd-item-button__sprite {
   width: 1.5rem;
   height: 1.5rem;
