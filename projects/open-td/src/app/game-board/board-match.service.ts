@@ -2,7 +2,7 @@ import { Injectable, computed, signal } from '@angular/core';
 import type { MatchSlots, PlayerKind } from './board-types';
 
 /** Temps (ms) alloué à l'IA pour trouver une solution avant qu'on la considère en échec. */
-export const AI_THINK_TIME_MS = 3000;
+export const AI_THINK_TIME_MS = 2000;
 
 /**
  * Issue d'une partie contre l'IA : le rôle dont l'IA n'a pas trouvé de solution à temps

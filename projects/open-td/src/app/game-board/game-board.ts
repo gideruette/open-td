@@ -15,7 +15,15 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import type { DefenseSimulation, MonsterInstance } from 'engine';
-import { cellsBetween, expandPathCells, isBorderCell, isChateauCell, isSpawnCell, selectTarget } from 'engine';
+import {
+  cellsBetween,
+  expandPathCells,
+  isBorderCell,
+  isChateauCell,
+  isRiverCell,
+  isSpawnCell,
+  selectTarget,
+} from 'engine';
 import {
   BIOME_COLORS,
   findMapCatalogEntry,
@@ -26,7 +34,15 @@ import {
   hexToWorld,
   worldToHex,
 } from 'shared';
-import type { GameMap, GridCoord, MapBiomeColors, TowerInstance, TowerType, Wave } from 'shared';
+import type {
+  GameMap,
+  GridCoord,
+  MapBiomeColors,
+  MapPath,
+  TowerInstance,
+  TowerType,
+  Wave,
+} from 'shared';
 import { Tooltip, type TooltipStat } from '../ui/tooltip/tooltip';
 import { BoardBudgetService } from './board-budget.service';
 import type { MatchSlots, MonsterView } from './board-types';
@@ -90,6 +106,7 @@ const SPRITE_IDS = [
   'gelee_mini',
   'troll_glace',
   'chateau',
+  'spawn',
 ];
 const DEFAULT_BIOME_COLORS: MapBiomeColors = BIOME_COLORS.foret;
 
@@ -163,7 +180,11 @@ function generateDecor(map: GameMap): DecorItem[] {
   const candidates: GridCoord[] = [];
   for (let y = 1; y < map.grid.rows - 1; y++) {
     for (let x = 1; x < map.grid.cols - 1; x++) {
-      if (isChateauCell(map, { x, y }) || isSpawnCell(map, { x, y })) {
+      if (
+        isChateauCell(map, { x, y }) ||
+        isSpawnCell(map, { x, y }) ||
+        isRiverCell(map, { x, y })
+      ) {
         continue;
       }
       candidates.push({ x, y });
@@ -189,6 +210,8 @@ function generateDecor(map: GameMap): DecorItem[] {
 
 /** Largeur du chemin dessiné, utilisée à la fois pour le tracé et pour caler la texture dessus. */
 const PATH_WIDTH = CELL_SIZE * 0.36;
+/** Multiplicateur de largeur appliqué à une rivière par rapport à un chemin (rendu plus large). */
+const RIVER_WIDTH_SCALE = 1.5;
 
 /** Moucheture (caillou/terre) semée sur un chemin pour lui donner un peu de relief. */
 interface PathSpeckle {
@@ -199,11 +222,14 @@ interface PathSpeckle {
   dark: boolean;
 }
 
-/** Sème des mouchetures le long de chaque chemin de la carte, déterministe (même carte ⇒ même texture). */
-function generatePathTexture(map: GameMap): PathSpeckle[] {
+/**
+ * Sème des mouchetures le long de chaque chemin donné, déterministe (même carte ⇒ même texture).
+ * Réutilisé pour les chemins et pour les rivières (même rendu, `seedPrefix` distinct).
+ */
+function generatePathTexture(paths: readonly MapPath[], seedPrefix: string): PathSpeckle[] {
   const speckles: PathSpeckle[] = [];
-  map.paths.forEach((path, pathIndex) => {
-    const random = seededRandom(hashString(`${map.id}:path:${path.id ?? pathIndex}`));
+  paths.forEach((path, pathIndex) => {
+    const random = seededRandom(hashString(`${seedPrefix}:${path.id ?? pathIndex}`));
     const cells = expandPathCells(path);
     for (let i = 0; i < cells.length - 1; i++) {
       const from = cellCenterPx(cells[i]);
@@ -297,6 +323,7 @@ export class GameBoard implements OnInit {
   protected readonly biomeColors = signal<MapBiomeColors>(DEFAULT_BIOME_COLORS);
   protected readonly decor = signal<readonly DecorItem[]>([]);
   protected readonly pathTexture = signal<readonly PathSpeckle[]>([]);
+  protected readonly riverTexture = signal<readonly PathSpeckle[]>([]);
   private projectiles: ProjectileView[] = [];
   private splashes: SplashView[] = [];
   private hitEffects: HitEffectView[] = [];
@@ -407,7 +434,9 @@ export class GameBoard implements OnInit {
       return !!this.vagueCourante();
     }
     const lanes = this.lanes();
-    return !this.isDrawingPath() && lanes.length > 0 && lanes.every((lane) => lane.units.length > 0);
+    return (
+      !this.isDrawingPath() && lanes.length > 0 && lanes.every((lane) => lane.units.length > 0)
+    );
   });
 
   constructor() {
@@ -715,7 +744,10 @@ export class GameBoard implements OnInit {
       // Case sans route existante mais spawn possible (existant ou bord éligible) : démarre
       // directement un nouveau tracé, sans passer par l'outil « Tracer ».
       const map = this.map();
-      if (map && (isSpawnCell(map, coord) || (isBorderCell(map, coord) && !isChateauCell(map, coord)))) {
+      if (
+        map &&
+        (isSpawnCell(map, coord) || (isBorderCell(map, coord) && !isChateauCell(map, coord)))
+      ) {
         this.lanesService.startTracing();
         this.lanesService.handleTracingClick(coord);
       }
@@ -884,7 +916,7 @@ export class GameBoard implements OnInit {
         this.defenseService.clearSelection();
         this.lanesService.setPanTool();
         this.messages.set(
-          `Défense réussie, château intact ! La forteresse est figée : ${this.nextMoverPhrase('attack')}.`,
+          `Les Chevaliers l'ont emporté, château intact ! La forteresse est figée : ${this.nextMoverPhrase('attack')}.`,
         );
         this.resetTrialDisplay();
         this.maybeStartAiTurn();
@@ -892,7 +924,9 @@ export class GameBoard implements OnInit {
         this.declareAiFailure('defense');
         this.trialService.setMonsters([]);
       } else {
-        this.messages.set('Défense échouée — le château a encaissé des dégâts. Ajustez vos tours et réessayez.');
+        this.messages.set(
+          'Les Chevaliers ont échoué — le château a encaissé des dégâts. Ajustez vos tours et réessayez.',
+        );
         this.trialService.setMonsters([]);
       }
     } else {
@@ -908,7 +942,7 @@ export class GameBoard implements OnInit {
         this.defenseService.clearSelection();
         this.lanesService.setPanTool();
         this.messages.set(
-          `Château détruit (${trial.getBreachCount()} brèche(s)) ! Palier ${this.palier()} — ${this.nextMoverPhrase('defense')}.`,
+          `Château détruit ! Palier ${this.palier()} — ${this.nextMoverPhrase('defense')}.`,
         );
         this.resetTrialDisplay();
         this.maybeStartAiTurn();
@@ -916,9 +950,7 @@ export class GameBoard implements OnInit {
         this.declareAiFailure('attack');
         this.trialService.setMonsters([]);
       } else {
-        this.messages.set(
-          `Château non détruit (${trial.getBreachCount()} brèche(s)). Recomposez et réessayez.`,
-        );
+        this.messages.set(`Château non détruit ! Recomposez et réessayez.`);
         this.trialService.setMonsters([]);
       }
     }
@@ -967,20 +999,20 @@ export class GameBoard implements OnInit {
     const isAi = this.matchService.currentMoverKind(nextPhase) === 'ai';
     return nextPhase === 'attack'
       ? isAi
-        ? "l'IA passe à l'attaque"
-        : "à vous d'attaquer"
+        ? "l'IA prend le contrôle des Monstres"
+        : 'à vous de jouer les Monstres'
       : isAi
-        ? "l'IA passe en défense"
-        : 'à vous de défendre';
+        ? "l'IA prend le contrôle des Chevaliers"
+        : 'à vous de jouer les Chevaliers';
   }
 
   /** L'IA du rôle `phase` n'a pas trouvé de solution à temps : l'autre rôle (humain) remporte la partie. */
   private declareAiFailure(phase: 'attack' | 'defense'): void {
     this.matchService.declareVictory(phase);
-    const winnerLabel = phase === 'attack' ? 'Défense' : 'Attaque';
-    const failedLabel = phase === 'attack' ? 'Attaque' : 'Défense';
+    const winnerLabel = phase === 'attack' ? 'Chevaliers' : 'Monstres';
+    const failedLabel = phase === 'attack' ? 'Monstres' : 'Chevaliers';
     this.messages.set(
-      `L'IA (${failedLabel}) n'a pas trouvé de solution à temps : ${winnerLabel} remporte la partie !`,
+      `L'IA (${failedLabel}) n'a pas trouvé de solution à temps : victoire pour les ${winnerLabel} !`,
     );
   }
 
@@ -1137,13 +1169,13 @@ export class GameBoard implements OnInit {
         (response) => response.json() as Promise<GameMap>,
       );
       this.decor.set(generateDecor(map));
-      this.pathTexture.set(generatePathTexture(map));
+      this.riverTexture.set(generatePathTexture(map.rivers ?? [], `${map.id}:river`));
       this.gameState.startRun(map, catalogEntry.startingData);
       this.matchService.configure(this.slots());
-      this.lanesService.applySavedPlan(() => undefined);
       this.resetView();
       this.maybeStartAiTurn();
-    } catch {
+    } catch (error) {
+      console.error('Impossible de charger la carte', error);
       this.messages.set('Impossible de charger la carte.');
     }
   }
@@ -1408,15 +1440,28 @@ export class GameBoard implements OnInit {
 
     ctx.strokeStyle = '#2a2f3a';
     ctx.lineWidth = 1;
+    ctx.lineCap = 'round';
     for (let y = 0; y < map.grid.rows; y++) {
       for (let x = 0; x < map.grid.cols; x++) {
-        this.strokeHex(ctx, { x, y });
+        this.strokeHexSoft(ctx, { x, y });
       }
     }
 
     const isAttackPhase = this.phase() === 'attack';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+
+    // Rivières : terrain non constructible, jamais franchi par un chemin (CONCEPTION.md §4).
+    // Même rendu que les chemins (berge sombre + remplissage clair + mouchetures), en plus large.
+    for (const river of map.rivers ?? []) {
+      this.drawTexturedPath(ctx, expandPathCells(river), biome.river, RIVER_WIDTH_SCALE);
+    }
+    for (const speckle of this.riverTexture()) {
+      ctx.fillStyle = speckle.dark ? 'rgba(0, 0, 0, 0.18)' : 'rgba(255, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.arc(speckle.x, speckle.y, speckle.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Chemins prédéfinis de la carte : texturé en défense, simple référence estompée en attaque.
     if (isAttackPhase) {
@@ -1477,8 +1522,11 @@ export class GameBoard implements OnInit {
       if (awaitingSpawnClick) {
         this.drawRangeRing(ctx, spawn.x, spawn.y, 0.85, '#7be0ff');
       }
-      ctx.fillStyle = '#7a5c2e';
-      this.fillHex(ctx, spawn);
+      const spawnCenter = cellCenterPx(spawn);
+      if (!this.drawSprite(ctx, 'spawn', spawnCenter.x, spawnCenter.y, CELL_SIZE * 1.8)) {
+        ctx.fillStyle = '#7a5c2e';
+        this.fillHex(ctx, spawn);
+      }
     }
 
     const chateauCenter = cellCenterPx(map.chateau);
@@ -1704,6 +1752,23 @@ export class GameBoard implements OnInit {
     ctx.stroke();
   }
 
+  /**
+   * Trace uniquement le centre de chaque arête (25%-75%), en laissant les angles ouverts : la
+   * grille de fond paraît aérée au lieu d'un pavage à angles vifs, sans risque de couture puisque
+   * rien n'est dessiné aux sommets partagés par plusieurs cases.
+   */
+  private strokeHexSoft(ctx: CanvasRenderingContext2D, coord: GridCoord): void {
+    const corners = hexCornersPx(coord);
+    ctx.beginPath();
+    for (let i = 0; i < corners.length; i++) {
+      const start = corners[i];
+      const end = corners[(i + 1) % corners.length];
+      ctx.moveTo(start.x + (end.x - start.x) * 0.25, start.y + (end.y - start.y) * 0.25);
+      ctx.lineTo(start.x + (end.x - start.x) * 0.75, start.y + (end.y - start.y) * 0.75);
+    }
+    ctx.stroke();
+  }
+
   /** Dessine le décor de fond (touffes de végétation, roches…) : purement cosmétique, sous les chemins et le reste. */
   private drawDecor(ctx: CanvasRenderingContext2D, color: string): void {
     ctx.fillStyle = color;
@@ -1719,18 +1784,19 @@ export class GameBoard implements OnInit {
     }
   }
 
-  /** Dessine un chemin avec un léger relief : bordure sombre en dessous, remplissage clair par-dessus. */
+  /** Dessine un chemin (ou une rivière, `widthScale` > 1) avec un léger relief : bordure sombre en dessous, remplissage clair par-dessus. */
   private drawTexturedPath(
     ctx: CanvasRenderingContext2D,
     points: readonly GridCoord[],
     color: string,
+    widthScale = 1,
   ): void {
     ctx.strokeStyle = shadeColor(color, -0.4);
-    ctx.lineWidth = PATH_WIDTH * 1.3;
+    ctx.lineWidth = PATH_WIDTH * 1.3 * widthScale;
     this.strokePolyline(ctx, points);
 
     ctx.strokeStyle = color;
-    ctx.lineWidth = PATH_WIDTH;
+    ctx.lineWidth = PATH_WIDTH * widthScale;
     this.strokePolyline(ctx, points);
   }
 
@@ -1795,7 +1861,12 @@ export class GameBoard implements OnInit {
   }
 
   /** Ombre au sol d'un monstre, dessinée sous son sprite (proportionnelle à son rayon d'affichage). */
-  private drawMonsterShadow(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number): void {
+  private drawMonsterShadow(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    radius: number,
+  ): void {
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
     ctx.beginPath();

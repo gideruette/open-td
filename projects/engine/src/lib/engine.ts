@@ -36,26 +36,24 @@ export class GameEngine {
     return `Open TD engine ready (${this.phaseState})`;
   }
 
-  /** Démarre une nouvelle run sur la carte donnée : palier 1, vague #0, forteresse vide. */
+  /**
+   * Démarre une nouvelle run sur la carte donnée : palier 1, forteresse vide. Aucune vague n'est
+   * pré-construite : la run commence en phase Attaque, contre une forteresse sans aucune tour
+   * (CONCEPTION.md §3) — la vague qui en résulte devient `vagueCourante` pour le palier 1 en
+   * phase Défense, une fois `resolveAttackSuccess` appelé.
+   */
   startRun(map: GameMap, startingData: StartingData): void {
     this.map = map;
-    this.phaseState = 'defense';
+    this.phaseState = 'attack';
     this.palier = 1;
     this.defenseBudget = startingData.startingDefenseBudget;
     this.attackBudget = startingData.startingAttackBudget;
     this.budgetGrowth = startingData.budgetGrowth;
     this.chateauMaxHp = startingData.chateauHp;
-    this.vagueCourante = startingData.initialWave;
+    this.vagueCourante = undefined;
     this.towers = [];
     this.towerSequence = 0;
-    // La toute première phase Attaque démarre avec les mêmes voies (chemins + monstres) que
-    // `initialWave`, pour ne pas forcer le joueur à réarmer chaque chemin prédéfini à vide.
-    this.savedAttackPlan = {
-      lanes: startingData.initialWave.lanes.map((lane) => ({
-        path: lane.path,
-        units: lane.units.map((unit) => ({ ...unit })),
-      })),
-    };
+    this.savedAttackPlan = { lanes: [] };
   }
 
   getMap(): GameMap | undefined {
@@ -144,7 +142,7 @@ export class GameEngine {
     return this.chateauMaxHp;
   }
 
-  /** vagueCourante : vague #0 pré-construite, puis dernière attaque réussie (CONCEPTION.md §3). */
+  /** vagueCourante : indéfinie avant la résolution de la première Attaque, puis dernière attaque réussie (CONCEPTION.md §3). */
   getVagueCourante(): Wave | undefined {
     return this.vagueCourante;
   }

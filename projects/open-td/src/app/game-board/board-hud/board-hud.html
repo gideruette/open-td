@@ -1,7 +1,7 @@
 <div class="board-hud" role="toolbar" aria-label="Commandes de jeu">
-  @if (phase() === 'attack' && !drawingPath() && !trialRunning()) {
+  @if (phase() === 'attack' && !drawingPath() && !trialRunning() && !isAiAttack()) {
     <div class="board-hud__lane">
-      <p class="board-hud__mover">Attaque — {{ currentMoverLabel() }}</p>
+      <p class="board-hud__mover">Monstres — {{ currentMoverLabel() }}</p>
       <div class="board-hud__lane-tabs" role="tablist" aria-label="Voies">
         @for (entry of lanes(); track entry.path.id; let i = $index) {
           <button
@@ -59,7 +59,7 @@
 
   @if (phase() === 'defense' && !trialRunning()) {
     <div class="board-hud__lane">
-      <p class="board-hud__mover">Défense — {{ currentMoverLabel() }}</p>
+      <p class="board-hud__mover">Chevaliers — {{ currentMoverLabel() }}</p>
       @if (defenseScore(); as score) {
         <p class="board-hud__debug-score">
           Debug — score estimé : {{ score }} PV château

@@ -1,6 +1,6 @@
 import type { GameMap, GridCoord, MapPath, MapSpawn, TowerInstance } from 'shared';
 import { hexDistance, hexLinedraw, hexNeighbors, hexToWorld } from 'shared';
-import { findTowerAt, isWithinGrid } from './fortress';
+import { findTowerAt, isRiverCell, isWithinGrid } from './fortress';
 
 function segmentLength(a: GridCoord, b: GridCoord): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -161,7 +161,7 @@ export function cellsBetween(from: GridCoord, to: GridCoord): GridCoord[] {
 
 /**
  * Un pas de tracé libre est valide s'il reste dans la grille, est adjacent à la case
- * précédente, et ne traverse pas une case occupée par une tour (CONCEPTION.md §5.3).
+ * précédente, et ne traverse ni une case occupée par une tour ni une rivière (CONCEPTION.md §5.3).
  */
 export function isValidPathStep(
   map: GameMap,
@@ -170,6 +170,9 @@ export function isValidPathStep(
   to: GridCoord,
 ): boolean {
   if (!isWithinGrid(map, to) || !isAdjacentCell(from, to)) {
+    return false;
+  }
+  if (isRiverCell(map, to)) {
     return false;
   }
   return !towers.some((tower) => tower.position.x === to.x && tower.position.y === to.y);
@@ -181,8 +184,8 @@ function cellKey(coord: GridCoord): string {
 
 /**
  * Plus court chemin (BFS, cases hex de coût uniforme) entre deux cases de la grille, en évitant
- * les cases occupées par une tour. Cases traversées, `from` exclue et `to` incluse (même
- * convention que `hexLinedraw`) ; `undefined` si `to` est inatteignable (encerclée de tours).
+ * les cases occupées par une tour et les rivières. Cases traversées, `from` exclue et `to` incluse
+ * (même convention que `hexLinedraw`) ; `undefined` si `to` est inatteignable (encerclée de tours).
  */
 export function shortestPath(
   map: GameMap,
@@ -201,7 +204,7 @@ export function shortestPath(
   while (queue.length > 0) {
     const current = queue.shift()!;
     for (const neighbor of hexNeighbors(current)) {
-      if (!isWithinGrid(map, neighbor) || findTowerAt(towers, neighbor)) {
+      if (!isWithinGrid(map, neighbor) || findTowerAt(towers, neighbor) || isRiverCell(map, neighbor)) {
         continue;
       }
       const neighborKey = cellKey(neighbor);

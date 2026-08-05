@@ -13,15 +13,17 @@ export interface MapBiomeColors {
   path: string;
   /** Couleur des éléments de décor (végétation, roches…) semés sur le fond. */
   decor: string;
+  /** Couleur des cases de rivière (terrain non constructible). */
+  river: string;
 }
 
-/** Une couleur de fond, de chemin et de décor par biome, appliquée uniformément à toute la carte. */
+/** Une couleur de fond, de chemin, de décor et de rivière par biome, appliquée uniformément à toute la carte. */
 export const BIOME_COLORS: Record<MapBiome, MapBiomeColors> = {
-  clairiere: { background: '#132016', path: '#d9c37a', decor: '#2f5a37' },
-  foret: { background: '#0e1712', path: '#c9a24b', decor: '#1f3a24' },
-  marais: { background: '#0e1a16', path: '#8a9a4a', decor: '#173028' },
-  toundra: { background: '#141a22', path: '#bcd8e8', decor: '#2c3e4e' },
-  montagne: { background: '#181414', path: '#9a8f7a', decor: '#2c2622' },
+  clairiere: { background: '#132016', path: '#d9c37a', decor: '#2f5a37', river: '#2c5f78' },
+  foret: { background: '#0e1712', path: '#c9a24b', decor: '#1f3a24', river: '#255a72' },
+  marais: { background: '#0e1a16', path: '#8a9a4a', decor: '#173028', river: '#1f5266' },
+  toundra: { background: '#141a22', path: '#bcd8e8', decor: '#2c3e4e', river: '#3a7a9e' },
+  montagne: { background: '#181414', path: '#9a8f7a', decor: '#2c2622', river: '#2f6480' },
 };
 
 /**
@@ -54,36 +56,6 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingAttackBudget: 100,
       budgetGrowth: { defense: 60, attack: 40 },
       chateauHp: 5,
-      initialWave: {
-        lanes: [
-          {
-            path: {
-              id: 'ouest',
-              nodes: [
-                [8, 11],
-                [1, 11],
-                [1, 1],
-                [8, 1],
-                [8, 6],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }],
-          },
-          {
-            path: {
-              id: 'est',
-              nodes: [
-                [8, 11],
-                [14, 11],
-                [14, 1],
-                [8, 1],
-                [8, 6],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }],
-          },
-        ],
-      },
     },
   },
   {
@@ -99,29 +71,6 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingAttackBudget: 100,
       budgetGrowth: { defense: 80, attack: 60 },
       chateauHp: 5,
-      initialWave: {
-        lanes: [
-          {
-            path: {
-              id: 'west',
-              nodes: [
-                [16, 23],
-                [2, 23],
-                [2, 2],
-                [16, 2],
-                [16, 12],
-              ],
-            },
-            units: [
-              { type: 'goblin' },
-              { type: 'goblin' },
-              { type: 'goblin' },
-              { type: 'orc' },
-              { type: 'goblin' },
-            ],
-          },
-        ],
-      },
     },
   },
   {
@@ -138,34 +87,6 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingAttackBudget: 200,
       budgetGrowth: { defense: 90, attack: 70 },
       chateauHp: 6,
-      initialWave: {
-        lanes: [
-          {
-            path: {
-              id: 'nord',
-              nodes: [
-                [12, 0],
-                [3, 0],
-                [3, 9],
-                [12, 9],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
-          },
-          {
-            path: {
-              id: 'sud',
-              nodes: [
-                [12, 17],
-                [20, 17],
-                [20, 9],
-                [12, 9],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }],
-          },
-        ],
-      },
     },
   },
   {
@@ -181,36 +102,6 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingAttackBudget: 220,
       budgetGrowth: { defense: 100, attack: 80 },
       chateauHp: 6,
-      initialWave: {
-        lanes: [
-          {
-            path: {
-              id: 'ouest',
-              nodes: [
-                [24, 15],
-                [2, 15],
-                [2, 1],
-                [24, 1],
-                [24, 8],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
-          },
-          {
-            path: {
-              id: 'est',
-              nodes: [
-                [24, 15],
-                [45, 15],
-                [45, 1],
-                [24, 1],
-                [24, 8],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
-          },
-        ],
-      },
     },
   },
   {
@@ -226,47 +117,6 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       startingAttackBudget: 240,
       budgetGrowth: { defense: 100, attack: 80 },
       chateauHp: 7,
-      initialWave: {
-        lanes: [
-          {
-            path: {
-              id: 'haute-ouest',
-              nodes: [
-                [5, 0],
-                [2, 0],
-                [2, 15],
-                [20, 15],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
-          },
-          {
-            path: {
-              id: 'haute-est',
-              nodes: [
-                [35, 0],
-                [37, 0],
-                [37, 15],
-                [20, 15],
-              ],
-            },
-            units: [{ type: 'orc' }, { type: 'orc' }],
-          },
-          {
-            path: {
-              id: 'basse',
-              nodes: [
-                [20, 29],
-                [8, 29],
-                [8, 22],
-                [20, 22],
-                [20, 15],
-              ],
-            },
-            units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }],
-          },
-        ],
-      },
     },
   },
 ];

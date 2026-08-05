@@ -36,6 +36,21 @@ export function isPathCell(map: GameMap, coord: GridCoord): boolean {
   );
 }
 
+/**
+ * Une case traversée par une rivière : jamais constructible, jamais franchissable par un chemin.
+ * La case du château fait exception : visuellement la rivière la traverse (elle passe dessous),
+ * mais un chemin doit pouvoir s'y terminer et une tour n'y a de toute façon jamais sa place
+ * (déjà exclue par `isChateauCell`).
+ */
+export function isRiverCell(map: GameMap, coord: GridCoord): boolean {
+  if (isChateauCell(map, coord)) {
+    return false;
+  }
+  return (map.rivers ?? []).some((river) =>
+    expandPathCells(river).some((cell) => sameCoord(cell, coord)),
+  );
+}
+
 export function findTowerAt(
   towers: readonly TowerInstance[],
   coord: GridCoord,
@@ -78,6 +93,9 @@ export function canOccupyCell(
   }
   if (isPathCell(map, coord)) {
     return { ok: false, reason: 'path-cell' };
+  }
+  if (isRiverCell(map, coord)) {
+    return { ok: false, reason: 'river-cell' };
   }
   if (findTowerAt(towers, coord)) {
     return { ok: false, reason: 'occupied' };

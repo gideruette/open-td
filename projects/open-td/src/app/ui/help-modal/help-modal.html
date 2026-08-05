@@ -32,17 +32,18 @@
       <div class="help-dialog__body">
         @if (activeTab() === 'regles') {
           <p>
-            Vous bâtissez une forteresse, puis vous l'attaquez — seul, ou face à l'IA sur l'un des deux rôles
-            (choisi à la configuration de la partie). Les phases <strong>Défense</strong> et
-            <strong>Attaque</strong> alternent, mais uniquement quand la phase en cours <strong>réussit</strong>
-            (détails dans les onglets Défense et Attaque).
+            Vous bâtissez une forteresse, puis vous l'attaquez — seul, ou face à l'IA, en incarnant l'un des deux
+            camps (choisi à la configuration de la partie). Les <strong>Chevaliers</strong> et les
+            <strong>Monstres</strong> alternent les tours, mais uniquement quand le camp en cours <strong>réussit</strong>
+            (détails dans les onglets Chevaliers et Monstres).
           </p>
 
           <h3 class="help-dialog__heading">Progression</h3>
           <p>
-            Chaque attaque réussie fait monter le <strong>palier</strong> : les budgets de défense et d'attaque
-            augmentent, et la vague que vous venez de créer devient le prochain défi à tenir. La forteresse et
-            le plan d'attaque persistent d'un cycle à l'autre — vous les renforcez, vous ne repartez pas de zéro.
+            Chaque assaut réussi des Monstres fait monter le <strong>palier</strong> : les budgets des Chevaliers et
+            des Monstres augmentent, et la vague que vous venez de créer devient le prochain défi à tenir. La
+            forteresse et le plan des Monstres persistent d'un cycle à l'autre — vous les renforcez, vous ne
+            repartez pas de zéro.
           </p>
 
           <h3 class="help-dialog__heading">Face à l'IA : objectif final</h3>
@@ -61,7 +62,7 @@
         @if (activeTab() === 'defense') {
           <h3 class="help-dialog__heading help-dialog__heading--defense">
             <img class="help-dialog__heading-icon" src="assets/sprites/shield-defense.svg" alt="" />
-            Phase Défense
+            Phase Chevaliers
           </h3>
           <ul>
             <li>Sans tour sélectionnée : glisser pour déplacer la vue ; molette ou pince pour zoomer.</li>
@@ -72,7 +73,7 @@
             <li>Touchez une tour déjà posée pour la supprimer.</li>
             <li>Chaque tour vise automatiquement le monstre le plus avancé à sa portée.</li>
             <li>Lancez l'épreuve : votre forteresse doit tenir face à la <em>vague courante</em>.</li>
-            <li>Succès → le château n'encaisse pas le moindre dégât : la forteresse est figée et vous passez en Attaque.</li>
+            <li>Succès → le château n'encaisse pas le moindre dégât : la forteresse est figée et la main passe aux Monstres.</li>
             <li>
               Échec → le château encaisse au moins un point de dégât, même sans tomber : ajustez vos tours et
               réessayez (sans limite pour un humain — l'IA, elle, perd après un temps de réflexion trop long).
@@ -84,7 +85,7 @@
         @if (activeTab() === 'attaque') {
           <h3 class="help-dialog__heading help-dialog__heading--attaque">
             <img class="help-dialog__heading-icon" src="assets/sprites/swords-attack.svg" alt="" />
-            Phase Attaque
+            Phase Monstres
           </h3>
           <ul>
             <li>Chaque chemin a un bouton dans la barre ; <strong>+</strong> démarre un nouveau tracé spawn → château.</li>
@@ -95,7 +96,7 @@
               partagée par plusieurs chemins n'est comptée qu'une fois.
             </li>
             <li>Chaque chemin actif doit être emprunté par au moins un monstre pour pouvoir lancer l'attaque.</li>
-            <li>Lancez l'attaque contre votre forteresse figée avec votre budget d'attaque.</li>
+            <li>Lancez l'attaque contre votre forteresse figée avec le budget des Monstres.</li>
             <li>Succès → le château est détruit : cette vague devient la prochaine à défendre.</li>
             <li>
               Échec → le château survit, même percé par un monstre : recomposez et réessayez (sans limite pour un

@@ -26,10 +26,10 @@ interface CatalogueEntry<T> {
 
 const TABS: readonly HelpTab[] = [
   { id: 'regles', label: 'Règles', icon: 'assets/sprites/chateau.svg', color: '#e8e6e1' },
-  { id: 'defense', label: 'Défense', icon: 'assets/sprites/shield-defense.svg', color: '#5fb0ff' },
-  { id: 'attaque', label: 'Attaque', icon: 'assets/sprites/swords-attack.svg', color: '#ffe08c' },
+  { id: 'defense', label: 'Chevaliers', icon: 'assets/sprites/shield-defense.svg', color: '#5fb0ff' },
+  { id: 'attaque', label: 'Monstres', icon: 'assets/sprites/swords-attack.svg', color: '#ffe08c' },
   { id: 'tours', label: 'Tours', icon: 'assets/sprites/archer.svg', color: '#5fb0ff' },
-  { id: 'monstres', label: 'Monstres', icon: 'assets/sprites/goblin.svg', color: '#ffe08c' },
+  { id: 'monstres', label: 'Bestiaire', icon: 'assets/sprites/goblin.svg', color: '#ffe08c' },
 ];
 
 /** Badge coloré résumant la spécialité d'une tour — dérivé de ses stats, `TowerType` n'ayant pas de champ dédié. */

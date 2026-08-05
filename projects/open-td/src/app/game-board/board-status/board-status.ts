@@ -32,7 +32,7 @@ export class BoardStatus {
     this.phase() === 'defense' ? this.budgetService.defense() : this.budgetService.attack(),
   );
   protected readonly resetLabel = computed(() =>
-    this.phase() === 'defense' ? 'Réinitialiser la défense' : "Réinitialiser l'attaque",
+    this.phase() === 'defense' ? 'Réinitialiser les Chevaliers' : 'Réinitialiser les Monstres',
   );
 
   /** Réinitialise toute la défense (phase Défense) ou tout le plan d'attaque (phase Attaque). */

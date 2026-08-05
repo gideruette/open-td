@@ -39,6 +39,30 @@ describe('Simulation IA vs IA', () => {
       console.log(`\n=== Partie IA vs IA — carte "${MAP.id}" ===`);
 
       for (let i = 0; i < MAX_PALIERS && !winner; i++) {
+        // Plus de vague #0 pré-construite (CONCEPTION.md §3) : le palier 1 est une vraie phase
+        // Attaque, jouée contre les tours actuellement posées (aucune au tout premier tour).
+        const attackWave: Wave = evolveAttackWave(
+          MAP,
+          engine.getTowers(),
+          engine.getAttackBudget(),
+          engine.getChateauMaxHp(),
+          undefined,
+          ATTACK_MAX_LANES,
+          ATTACK_POPULATION_SIZE,
+          AI_THINK_TIME_MS,
+        );
+        const attackTrial = engine.startAttackTrial(attackWave);
+        const attackOutcome = attackTrial.runToCompletion();
+        console.log(
+          `Palier ${engine.getPalier()} — Attaque : ${attackWave.lanes.length} voie(s), ` +
+            `${attackTrial.getBreachCount()} brèche(s) → ${attackOutcome}`,
+        );
+        if (attackOutcome === 'failure') {
+          winner = 'defense';
+          break;
+        }
+        engine.resolveAttackSuccess(attackWave);
+
         const wave = engine.getVagueCourante() as Wave;
         const towers =
           playDefensePhase({
@@ -62,28 +86,6 @@ describe('Simulation IA vs IA', () => {
           break;
         }
         engine.resolveDefenseSuccess();
-
-        const attackWave: Wave = evolveAttackWave(
-          MAP,
-          engine.getTowers(),
-          engine.getAttackBudget(),
-          engine.getChateauMaxHp(),
-          undefined,
-          ATTACK_MAX_LANES,
-          ATTACK_POPULATION_SIZE,
-          AI_THINK_TIME_MS,
-        );
-        const attackTrial = engine.startAttackTrial(attackWave);
-        const attackOutcome = attackTrial.runToCompletion();
-        console.log(
-          `Palier ${engine.getPalier()} — Attaque : ${attackWave.lanes.length} voie(s), ` +
-            `${attackTrial.getBreachCount()} brèche(s) → ${attackOutcome}`,
-        );
-        if (attackOutcome === 'failure') {
-          winner = 'defense';
-          break;
-        }
-        engine.resolveAttackSuccess(attackWave);
       }
 
       const phaseAtEnd: GamePhase = engine.getPhase();

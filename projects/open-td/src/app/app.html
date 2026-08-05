@@ -4,9 +4,15 @@
       <header class="shell__header">
         <h1>{{ title() }}</h1>
         <div class="shell__header-actions">
-          <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">?</button>
-          <button type="button" class="shell__change-map" (click)="changeMode()">Changer de mode</button>
-          <button type="button" class="shell__change-map" (click)="backToMenu()">Changer de carte</button>
+          <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">
+            ?
+          </button>
+          <button type="button" class="shell__change-map" (click)="changeMode()">
+            Changer de camp
+          </button>
+          <button type="button" class="shell__change-map" (click)="backToMenu()">
+            Changer de territoire
+          </button>
         </div>
       </header>
       <otd-game-board [mapId]="mapId" [slots]="slots" (restart)="changeMode()" />
@@ -14,7 +20,12 @@
     </main>
   } @else {
     <otd-map-select (mapChosen)="onMapChosen($event)" />
-    <button type="button" class="shell__help shell__help--floating" aria-label="Règles du jeu" (click)="openHelp()">
+    <button
+      type="button"
+      class="shell__help shell__help--floating"
+      aria-label="Règles du jeu"
+      (click)="openHelp()"
+    >
       ?
     </button>
   }

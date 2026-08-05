@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="spawnRock" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#6b5638"/>
+      <stop offset="100%" stop-color="#2e2013"/>
+    </radialGradient>
+    <radialGradient id="spawnRift" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#e9caff"/>
+      <stop offset="45%" stop-color="#8a4fd6"/>
+      <stop offset="100%" stop-color="#190c2a"/>
+    </radialGradient>
+    <radialGradient id="spawnGloss" cx="35%" cy="22%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <polygon points="56,32 47.6,23 44,11.2 32,14 20,11.2 16.4,23 8,32 16.4,41 20,52.8 32,50 44,52.8 47.6,41"
+    fill="url(#spawnRock)" stroke="#1c130a" stroke-width="2" stroke-linejoin="round"/>
+  <polygon points="56,32 47.6,23 44,11.2 32,14 20,11.2 16.4,23 8,32 16.4,41 20,52.8 32,50 44,52.8 47.6,41"
+    fill="url(#spawnGloss)"/>
+
+  <g stroke="#150d06" stroke-width="1.2" opacity="0.55" fill="none" stroke-linecap="round">
+    <path d="M32 32 L21 21"/>
+    <path d="M32 32 L44 24"/>
+    <path d="M32 32 L23 45"/>
+    <path d="M32 32 L42 43"/>
+  </g>
+
+  <ellipse cx="32" cy="32" rx="15" ry="8" transform="rotate(-24 32 32)"
+    fill="url(#spawnRift)" stroke="#2a1440" stroke-width="1.5"/>
+
+  <circle cx="25" cy="15" r="1.6" fill="#e9caff" opacity="0.85"/>
+  <circle cx="41" cy="19" r="1.1" fill="#e9caff" opacity="0.7"/>
+  <circle cx="34" cy="9" r="1" fill="#e9caff" opacity="0.6"/>
+</svg>

@@ -73,6 +73,7 @@ export type PlacementFailureReason =
   | 'chateau-cell'
   | 'border-cell'
   | 'path-cell'
+  | 'river-cell'
   | 'occupied'
   | 'insufficient-budget'
   | 'unknown-tower-type'
@@ -130,6 +131,8 @@ export interface GameMap {
   chateau: GridCoord;
   spawns: MapSpawn[];
   paths: MapPath[];
+  /** Rivière(s) : jamais constructible, tracé fermé aux chemins (CONCEPTION.md §4). */
+  rivers?: MapPath[];
 }
 
 /** Croissance des budgets appliquée après chaque attaque réussie. */
@@ -138,7 +141,7 @@ export interface BudgetGrowth {
   attack: number;
 }
 
-/** Données de départ d'une run : budgets initiaux + vague #0 (voir CONCEPTION.md §8). */
+/** Données de départ d'une run : budgets initiaux (voir CONCEPTION.md §8). */
 export interface StartingData {
   mapId: string;
   startingDefenseBudget: number;
@@ -146,5 +149,4 @@ export interface StartingData {
   budgetGrowth: BudgetGrowth;
   /** PV du château au début d'une épreuve de défense. */
   chateauHp: number;
-  initialWave: Wave;
 }

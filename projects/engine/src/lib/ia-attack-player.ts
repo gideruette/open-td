@@ -11,7 +11,13 @@ import type {
 import { MONSTER_TYPES, hexDistance } from 'shared';
 import { findTowerAt, isBorderCell, isChateauCell } from './fortress';
 import { shuffled } from './ia-player';
-import { PATH_CELL_COST, expandPathCells, hasUniqueCell, pathCellsCost, routeThroughWaypoints } from './path';
+import {
+  PATH_CELL_COST,
+  expandPathCells,
+  hasUniqueCell,
+  pathCellsCost,
+  routeThroughWaypoints,
+} from './path';
 import { phaseScore, waveCost } from './combat';
 
 /**
@@ -70,7 +76,11 @@ function affordableLaneCap(
 }
 
 /** Cases libres (aucune tour) tirées au hasard sur la grille ; peut en renvoyer moins que `count` si la grille est saturée de tours. */
-function randomFreeCells(map: GameMap, towers: readonly TowerInstance[], count: number): GridCoord[] {
+function randomFreeCells(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  count: number,
+): GridCoord[] {
   const cells: GridCoord[] = [];
   let attempts = 0;
   while (cells.length < count && attempts < count * 20) {
@@ -254,7 +264,8 @@ export function crossWaves(
     const laneB = parentB.lanes[i];
     const path =
       laneA && laneB
-        ? (blendRoutes(map, towers, laneA.path, laneB.path) ?? shuffled([laneA.path, laneB.path])[0])
+        ? (blendRoutes(map, towers, laneA.path, laneB.path) ??
+          shuffled([laneA.path, laneB.path])[0])
         : (laneA ?? laneB)?.path;
     if (!path || usedPathIds.has(path.id)) {
       continue;
@@ -322,13 +333,22 @@ function removeRandomWaypoint(
   }
   const dropIndex = 1 + Math.floor(Math.random() * (cells.length - 2));
   const waypoints = cells.filter((_, index) => index !== 0 && index !== dropIndex);
-  const rerouted = routeThroughWaypoints(map, towers, cells[0], waypoints.slice(0, -1), cells[cells.length - 1]);
+  const rerouted = routeThroughWaypoints(
+    map,
+    towers,
+    cells[0],
+    waypoints.slice(0, -1),
+    cells[cells.length - 1],
+  );
   if (!rerouted) {
     return undefined;
   }
   return {
     ...path,
-    nodes: [[cells[0].x, cells[0].y], ...rerouted.map((cell): [number, number] => [cell.x, cell.y])],
+    nodes: [
+      [cells[0].x, cells[0].y],
+      ...rerouted.map((cell): [number, number] => [cell.x, cell.y]),
+    ],
   };
 }
 
@@ -429,10 +449,15 @@ export function evolveAttackWave(
 ): Wave {
   const start = Date.now();
 
-  const effectiveMaxLanes = Math.min(maxLanes, affordableLaneCap(map, attackBudget, monsterCatalog));
+  const effectiveMaxLanes = Math.min(
+    maxLanes,
+    affordableLaneCap(map, attackBudget, monsterCatalog),
+  );
   const initialCandidates: Wave[] = [];
   while (initialCandidates.length < 2 * populationSize && Date.now() - start < maxTime) {
-    initialCandidates.push(initRandomWave(map, towers, attackBudget, monsterCatalog, effectiveMaxLanes));
+    initialCandidates.push(
+      initRandomWave(map, towers, attackBudget, monsterCatalog, effectiveMaxLanes),
+    );
   }
   let population = fittestWaves(
     initialCandidates,
@@ -474,7 +499,7 @@ export function playAttackPhase(input: AttackPlayerInput): Wave | undefined {
     input.chateauMaxHp,
     input.monsterCatalog,
     100,
-    1000,
+    500,
     input.maxTime,
   );
 }

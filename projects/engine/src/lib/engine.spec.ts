@@ -29,13 +29,24 @@ function makeStartingData(overrides: Partial<StartingData> = {}): StartingData {
     startingAttackBudget: 80,
     budgetGrowth: { defense: 40, attack: 30 },
     chateauHp: 100,
-    initialWave: wave(lane([{ type: 'goblin' }])),
     ...overrides,
   };
 }
 
+/**
+ * Démarre une run et l'amène en phase Défense (palier 2) via une première phase Attaque jouée
+ * contre une forteresse vide — reproduit le déroulé réel du jeu : plus de vague pré-construite,
+ * le palier 1 est une vraie phase Attaque (CONCEPTION.md §3). `budgetGrowth` est neutralisée par
+ * défaut pour que les budgets de test restent lisibles (égaux à `startingXBudget`) ; à surcharger
+ * explicitement dans les tests qui portent sur la croissance des budgets.
+ */
+function startInDefense(engine: GameEngine, overrides: Partial<StartingData> = {}): void {
+  engine.startRun(map, makeStartingData({ budgetGrowth: { defense: 0, attack: 0 }, ...overrides }));
+  engine.resolveAttackSuccess(wave(lane([])));
+}
+
 describe('GameEngine', () => {
-  it('starts in defense phase', () => {
+  it('defaults to the defense phase before any run is started', () => {
     const engine = new GameEngine();
     expect(engine.getPhase()).toBe('defense');
   });
@@ -43,6 +54,15 @@ describe('GameEngine', () => {
   it('reports ready status', () => {
     const engine = new GameEngine();
     expect(engine.getStatus()).toContain('Open TD engine ready');
+  });
+
+  it('starts a run in the attack phase, against an empty fortress, with no vagueCourante yet', () => {
+    const engine = new GameEngine();
+    engine.startRun(map, makeStartingData());
+
+    expect(engine.getPhase()).toBe('attack');
+    expect(engine.getVagueCourante()).toBeUndefined();
+    expect(engine.getTowers()).toHaveLength(0);
   });
 
   describe('placeTower', () => {
@@ -54,9 +74,19 @@ describe('GameEngine', () => {
       });
     });
 
-    it('places a tower on a valid cell and deducts its cost from the budget', () => {
+    it('rejects placement during the initial attack phase (palier 1)', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
+
+      expect(engine.placeTower('archer', { x: 1, y: 1 })).toEqual({
+        ok: false,
+        reason: 'wrong-phase',
+      });
+    });
+
+    it('places a tower on a valid cell and deducts its cost from the budget', () => {
+      const engine = new GameEngine();
+      startInDefense(engine);
 
       const result = engine.placeTower('archer', { x: 1, y: 1 });
 
@@ -67,15 +97,15 @@ describe('GameEngine', () => {
 
     it('stamps new towers with the current palier', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
 
-      expect(engine.getTowers()[0].placedAtPalier).toBe(1);
+      expect(engine.getTowers()[0].placedAtPalier).toBe(2);
     });
 
     it('rejects a second tower on the same cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
 
       expect(engine.placeTower('canon', { x: 1, y: 1 })).toEqual({
@@ -87,7 +117,7 @@ describe('GameEngine', () => {
 
     it('rejects placement once the budget is exhausted', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ startingDefenseBudget: 20 }));
+      startInDefense(engine, { startingDefenseBudget: 20 });
       engine.placeTower('archer', { x: 1, y: 1 });
 
       expect(engine.placeTower('canon', { x: 2, y: 2 })).toEqual({
@@ -98,7 +128,7 @@ describe('GameEngine', () => {
 
     it('rejects placement on the chateau cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       expect(engine.placeTower('archer', { x: 3, y: 3 })).toEqual({
         ok: false,
@@ -108,7 +138,7 @@ describe('GameEngine', () => {
 
     it('rejects placement on a border cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       expect(engine.placeTower('archer', { x: 0, y: 2 })).toEqual({
         ok: false,
@@ -118,10 +148,10 @@ describe('GameEngine', () => {
 
     it('resets towers and budget when a new run starts', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
 
-      engine.startRun(map, makeStartingData({ startingDefenseBudget: 50 }));
+      startInDefense(engine, { startingDefenseBudget: 50 });
 
       expect(engine.getTowers()).toHaveLength(0);
       expect(engine.getRemainingBudget()).toBe(50);
@@ -129,7 +159,7 @@ describe('GameEngine', () => {
 
     it('rejects placement outside the defense phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.resolveDefenseSuccess();
 
       expect(engine.placeTower('archer', { x: 1, y: 1 })).toEqual({
@@ -142,7 +172,7 @@ describe('GameEngine', () => {
   describe('deleteTower', () => {
     it('removes the tower and recovers its full construction cost', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 }); // cost 20
       const towerId = engine.getTowers()[0].id;
 
@@ -155,7 +185,7 @@ describe('GameEngine', () => {
 
     it('frees the cell so a new tower can be placed there', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       engine.deleteTower(engine.getTowers()[0].id);
 
@@ -164,14 +194,14 @@ describe('GameEngine', () => {
 
     it('returns undefined for an unknown tower id', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       expect(engine.deleteTower('missing')).toBeUndefined();
     });
 
     it('returns undefined outside the defense phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
       engine.resolveDefenseSuccess();
@@ -182,12 +212,12 @@ describe('GameEngine', () => {
 
     it('recovers the full cost even for a tower inherited from a previous palier', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 1
+      startInDefense(engine);
+      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 2
       const towerId = engine.getTowers()[0].id;
 
       engine.resolveDefenseSuccess();
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2, back to defense
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 3, back to defense
 
       expect(engine.deleteTower(towerId)).toBe(20);
       expect(engine.getRemainingBudget()).toBe(engine.getDefenseBudget());
@@ -197,7 +227,7 @@ describe('GameEngine', () => {
   describe('moveTower', () => {
     it('relocates the tower and frees its old cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
 
@@ -210,7 +240,7 @@ describe('GameEngine', () => {
 
     it('is free (no budget change) for a tower placed this palier', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
       const before = engine.getRemainingBudget();
@@ -222,12 +252,12 @@ describe('GameEngine', () => {
 
     it('is free even for a tower inherited from a previous palier', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
-      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 1
+      startInDefense(engine);
+      engine.placeTower('archer', { x: 1, y: 1 }); // cost 20, placed at palier 2
       const towerId = engine.getTowers()[0].id;
 
       engine.resolveDefenseSuccess();
-      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 2
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 3
       const before = engine.getRemainingBudget();
 
       const result = engine.moveTower(towerId, { x: 2, y: 2 });
@@ -238,7 +268,7 @@ describe('GameEngine', () => {
 
     it('rejects a move onto a cell already occupied by another tower', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       engine.placeTower('canon', { x: 2, y: 2 });
       const towerId = engine.getTowers()[0].id;
@@ -248,7 +278,7 @@ describe('GameEngine', () => {
 
     it('rejects a move onto the chateau cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
 
@@ -257,7 +287,7 @@ describe('GameEngine', () => {
 
     it('rejects a move onto a border cell', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
 
@@ -266,14 +296,14 @@ describe('GameEngine', () => {
 
     it('returns tower-not-found for an unknown tower id', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       expect(engine.moveTower('missing', { x: 2, y: 2 })).toEqual({ ok: false, reason: 'tower-not-found' });
     });
 
     it('returns wrong-phase outside the defense phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.placeTower('archer', { x: 1, y: 1 });
       const towerId = engine.getTowers()[0].id;
       engine.resolveDefenseSuccess();
@@ -283,12 +313,21 @@ describe('GameEngine', () => {
   });
 
   describe('vagueCourante & startDefenseTrial', () => {
-    it('exposes the initial wave as vagueCourante after startRun', () => {
+    it('has no vagueCourante until the initial attack phase resolves', () => {
       const engine = new GameEngine();
-      const initialWave = wave(lane([{ type: 'orc' }]));
-      engine.startRun(map, makeStartingData({ initialWave }));
+      engine.startRun(map, makeStartingData());
 
-      expect(engine.getVagueCourante()).toEqual(initialWave);
+      expect(engine.getVagueCourante()).toBeUndefined();
+    });
+
+    it('exposes the wave played in the initial attack phase as vagueCourante', () => {
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+      const firstWave = wave(lane([{ type: 'orc' }]));
+
+      engine.resolveAttackSuccess(firstWave);
+
+      expect(engine.getVagueCourante()).toEqual(firstWave);
     });
 
     it('throws when starting a defense trial before a run has started', () => {
@@ -296,9 +335,16 @@ describe('GameEngine', () => {
       expect(() => engine.startDefenseTrial()).toThrow();
     });
 
+    it('throws when starting a defense trial before the initial attack phase has resolved', () => {
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+
+      expect(() => engine.startDefenseTrial()).toThrow();
+    });
+
     it('runs vagueCourante against the current fortress', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ initialWave: wave(lane([])), chateauHp: 5 }));
+      startInDefense(engine, { chateauHp: 5 }); // vagueCourante = empty wave from the bootstrap attack
 
       const trial = engine.startDefenseTrial();
 
@@ -307,9 +353,21 @@ describe('GameEngine', () => {
   });
 
   describe('phase alternation', () => {
-    it('locks the fortress and moves to the attack phase on defense success', () => {
+    it('resolves the initial attack and moves to the defense phase, raising the palier and growing budgets', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
+
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
+
+      expect(engine.getPhase()).toBe('defense');
+      expect(engine.getPalier()).toBe(2);
+      expect(engine.getDefenseBudget()).toBe(140); // 100 + 40 growth
+      expect(engine.getAttackBudget()).toBe(110); // 80 + 30 growth
+    });
+
+    it('locks the fortress and moves to the attack phase on defense success', () => {
+      const engine = new GameEngine();
+      startInDefense(engine);
 
       engine.resolveDefenseSuccess();
 
@@ -318,7 +376,7 @@ describe('GameEngine', () => {
 
     it('is a no-op when resolveDefenseSuccess is called outside the defense phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.resolveDefenseSuccess();
 
       engine.resolveDefenseSuccess();
@@ -328,14 +386,14 @@ describe('GameEngine', () => {
 
     it('throws when starting an attack trial outside the attack phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       expect(() => engine.startAttackTrial(wave(lane([])))).toThrow();
     });
 
     it('runs a composed wave against the frozen fortress in attack mode', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ chateauHp: 1 }));
+      startInDefense(engine, { chateauHp: 1 });
       engine.resolveDefenseSuccess();
 
       const composedWave = wave(lane([{ type: 'goblin' }]));
@@ -346,32 +404,33 @@ describe('GameEngine', () => {
 
     it('replaces vagueCourante, raises the palier and grows both budgets on attack success', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine, { budgetGrowth: { defense: 40, attack: 30 } });
       engine.resolveDefenseSuccess();
 
       const composedWave = wave(lane([{ type: 'orc' }]));
       engine.resolveAttackSuccess(composedWave);
 
       expect(engine.getVagueCourante()).toEqual(composedWave);
-      expect(engine.getPalier()).toBe(2);
-      expect(engine.getRemainingBudget()).toBe(140); // 100 + 40 growth
-      expect(engine.getAttackBudget()).toBe(110); // 80 + 30 growth
+      expect(engine.getPalier()).toBe(3); // 1 (bootstrap attack) -> 2 (defense) -> 3
+      // Growth applies once at the bootstrap attack (palier 1 -> 2) and once more here (2 -> 3).
+      expect(engine.getRemainingBudget()).toBe(180); // 100 + 40 + 40
+      expect(engine.getAttackBudget()).toBe(140); // 80 + 30 + 30
       expect(engine.getPhase()).toBe('defense');
     });
 
     it('is a no-op when resolveAttackSuccess is called outside the attack phase', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
 
-      expect(engine.getPalier()).toBe(1);
+      expect(engine.getPalier()).toBe(2);
       expect(engine.getPhase()).toBe('defense');
     });
 
     it('unlocks the fortress for editing again after returning to defense', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.resolveDefenseSuccess();
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
 
@@ -382,7 +441,7 @@ describe('GameEngine', () => {
   describe('getAttackBudgetRemaining', () => {
     it('subtracts the cost of the composed wave from the attack budget', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ startingAttackBudget: 80 }));
+      startInDefense(engine, { startingAttackBudget: 80 });
 
       // goblin cost 5, orc cost 12 (shared/monsters.ts)
       const composedWave = wave(lane([{ type: 'goblin' }, { type: 'orc' }]));
@@ -419,7 +478,7 @@ describe('GameEngine', () => {
 
     it('keeps working across phases (removed paths stay removed in defense and attack)', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
       engine.removePath('p1');
       engine.resolveDefenseSuccess();
 
@@ -448,7 +507,7 @@ describe('GameEngine', () => {
 
     it('survives the defense-to-attack transition (persisted, not tied to the wave draft)', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       engine.addPath(custom);
       engine.resolveDefenseSuccess();
@@ -458,7 +517,7 @@ describe('GameEngine', () => {
 
     it('survives a full cycle back into defense', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       engine.addPath(custom);
       engine.resolveDefenseSuccess();
@@ -489,7 +548,7 @@ describe('GameEngine', () => {
 
     it('survives the defense-to-attack transition', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData());
+      startInDefense(engine);
 
       engine.addSpawn(spawn);
       engine.resolveDefenseSuccess();
@@ -521,7 +580,7 @@ describe('GameEngine', () => {
   describe('getDefenseBudget', () => {
     it('reports the gross defense budget, unaffected by towers already placed', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ startingDefenseBudget: 100 }));
+      startInDefense(engine, { startingDefenseBudget: 100 });
       engine.placeTower('archer', { x: 1, y: 1 });
 
       expect(engine.getDefenseBudget()).toBe(100);
@@ -530,11 +589,12 @@ describe('GameEngine', () => {
 
     it('grows after an attack success, alongside the remaining budget', () => {
       const engine = new GameEngine();
-      engine.startRun(map, makeStartingData({ startingDefenseBudget: 100 }));
+      startInDefense(engine, { startingDefenseBudget: 100, budgetGrowth: { defense: 40, attack: 30 } });
       engine.resolveDefenseSuccess();
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
 
-      expect(engine.getDefenseBudget()).toBe(140); // 100 + 40 growth
+      // Growth applies once at the bootstrap attack (palier 1 -> 2) and once more here (2 -> 3).
+      expect(engine.getDefenseBudget()).toBe(180); // 100 + 40 + 40
     });
   });
 });

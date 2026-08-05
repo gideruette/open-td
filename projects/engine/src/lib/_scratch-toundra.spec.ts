@@ -17,12 +17,23 @@ const MAP: GameMap = {
   ],
 };
 
+// La vague #0 n'est plus pré-construite (CONCEPTION.md §3) : le palier 1 est désormais une vraie
+// phase Attaque. Ce scratch rejoue ici la composition qui servait autrefois de vague par défaut,
+// via `resolveAttackSuccess`, pour mesurer le budget de Défense minimal au palier 2 qui en résulte.
+const BOOTSTRAP_WAVE: Wave = {
+  lanes: [
+    { path: MAP.paths[0], units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }] },
+    { path: MAP.paths[1], units: [{ type: 'goblin' }, { type: 'goblin' }, { type: 'goblin' }, { type: 'orc' }] },
+  ],
+};
+
 describe('Scratch: budget minimal toundra-05 palier 1', () => {
   for (const budget of [140, 160, 180, 200, 220, 250, 280]) {
     it(`budget ${budget}`, () => {
       const startingData = findMapCatalogEntry('toundra-05')!.startingData;
       const engine = new GameEngine();
       engine.startRun(MAP, { ...startingData, startingDefenseBudget: budget });
+      engine.resolveAttackSuccess(BOOTSTRAP_WAVE);
 
       const wave = engine.getVagueCourante() as Wave;
       let bestHp = -1;
@@ -37,6 +48,7 @@ describe('Scratch: budget minimal toundra-05 palier 1', () => {
           }) ?? [];
         const engine2 = new GameEngine();
         engine2.startRun(MAP, { ...startingData, startingDefenseBudget: budget });
+        engine2.resolveAttackSuccess(BOOTSTRAP_WAVE);
         for (const tower of towers) {
           engine2.placeTower(tower.typeId, tower.position);
         }

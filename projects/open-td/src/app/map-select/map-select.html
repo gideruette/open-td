@@ -1,7 +1,7 @@
 <section class="map-select">
   <header class="map-select__header">
     <h1>Open TD</h1>
-    <p>Choisissez votre carte de départ.</p>
+    <p>Choisissez votre carte de territoire.</p>
   </header>
 
   <div class="map-select__grid">
@@ -19,16 +19,20 @@
         <span class="map-card__name">{{ entry.name }}</span>
         <span class="map-card__meta">
           <span class="map-card__dimensions">{{ entry.grid.cols }} × {{ entry.grid.rows }}</span>
-          <span class="map-card__difficulty" [attr.data-difficulty]="entry.difficulty">{{ entry.difficulty }}</span>
+          <span class="map-card__difficulty" [attr.data-difficulty]="entry.difficulty">{{
+            entry.difficulty
+          }}</span>
         </span>
         <span class="map-card__description">{{ entry.description }}</span>
         <span class="map-card__budget">
-          Budget départ : {{ entry.startingData.startingDefenseBudget }} défense /
-          {{ entry.startingData.startingAttackBudget }} attaque
+          Budget départ — Chevaliers : {{ entry.startingData.startingDefenseBudget }} · Monstres :
+          {{ entry.startingData.startingAttackBudget }}
         </span>
       </button>
     }
   </div>
 
-  <footer class="map-select__footer">Version du {{ buildDate | date: 'dd/MM/yyyy à HH:mm' }}</footer>
+  <footer class="map-select__footer">
+    Version du {{ buildDate | date: 'dd/MM/yyyy à HH:mm' }}
+  </footer>
 </section>

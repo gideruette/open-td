@@ -33,6 +33,10 @@ export class BoardHud {
   protected readonly currentMoverLabel = computed(() =>
     this.matchService.currentMoverKind(this.phase() as 'attack' | 'defense') === 'ai' ? 'IA' : 'Humain',
   );
+  /** Vrai si l'IA joue la phase Attaque en cours : le HUD des voies reste replié, l'IA n'en a pas besoin. */
+  protected readonly isAiAttack = computed(
+    () => this.phase() === 'attack' && this.matchService.currentMoverKind('attack') === 'ai',
+  );
   /** Verrouille les actions du HUD pendant une épreuve, le tour de l'IA, ou une fois la partie terminée. */
   protected readonly locked = computed(
     () => this.trialRunning() || this.matchService.isThinking() || this.matchService.isOver(),

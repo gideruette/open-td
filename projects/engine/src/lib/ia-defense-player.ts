@@ -299,7 +299,7 @@ export function playDefensePhase(input: DefensePlayerInput): readonly TowerInsta
     input.chateauMaxHp,
     input.monsterCatalog,
     input.towerCatalog,
-    1000,
+    500,
     input.maxTime,
   );
 }

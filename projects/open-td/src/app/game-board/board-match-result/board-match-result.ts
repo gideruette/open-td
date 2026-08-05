@@ -3,8 +3,8 @@ import { Button } from '../../ui/button/button';
 import type { MatchOutcome } from '../board-match.service';
 
 const ROLE_LABEL: Record<'attack' | 'defense', string> = {
-  attack: 'Attaque',
-  defense: 'Défense',
+  attack: 'Monstres',
+  defense: 'Chevaliers',
 };
 
 /** Écran de fin de partie : l'IA d'un rôle n'a pas trouvé de solution à temps, l'autre l'emporte. */
