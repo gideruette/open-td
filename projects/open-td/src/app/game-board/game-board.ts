@@ -118,6 +118,18 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/** Assombrit (`percent` < 0) ou éclaircit (`percent` > 0) une couleur hex de -1 à 1. */
+function shadeColor(hex: string, percent: number): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  const target = percent < 0 ? 0 : 255;
+  const ratio = Math.min(1, Math.abs(percent));
+  const mix = (channel: number) => Math.round(channel + (target - channel) * ratio);
+  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+}
+
 /** Part des cases intérieures (hors bord, château, spawns) semées d'un élément de décor. */
 const DECOR_DENSITY = 0.05;
 
@@ -173,6 +185,48 @@ function generateDecor(map: GameMap): DecorItem[] {
       scale: 0.6 + random() * 0.7,
     };
   });
+}
+
+/** Largeur du chemin dessiné, utilisée à la fois pour le tracé et pour caler la texture dessus. */
+const PATH_WIDTH = CELL_SIZE * 0.36;
+
+/** Moucheture (caillou/terre) semée sur un chemin pour lui donner un peu de relief. */
+interface PathSpeckle {
+  x: number;
+  y: number;
+  radius: number;
+  /** true = moucheture sombre (creux), false = moucheture claire (caillou). */
+  dark: boolean;
+}
+
+/** Sème des mouchetures le long de chaque chemin de la carte, déterministe (même carte ⇒ même texture). */
+function generatePathTexture(map: GameMap): PathSpeckle[] {
+  const speckles: PathSpeckle[] = [];
+  map.paths.forEach((path, pathIndex) => {
+    const random = seededRandom(hashString(`${map.id}:path:${path.id ?? pathIndex}`));
+    const cells = expandPathCells(path);
+    for (let i = 0; i < cells.length - 1; i++) {
+      const from = cellCenterPx(cells[i]);
+      const to = cellCenterPx(cells[i + 1]);
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const segmentLength = Math.hypot(dx, dy) || 1;
+      const normalX = -dy / segmentLength;
+      const normalY = dx / segmentLength;
+      const speckleCount = Math.max(2, Math.round(segmentLength / (CELL_SIZE * 0.35)));
+      for (let s = 0; s < speckleCount; s++) {
+        const t = (s + random() * 0.7) / speckleCount;
+        const offset = (random() - 0.5) * PATH_WIDTH;
+        speckles.push({
+          x: from.x + dx * t + normalX * offset,
+          y: from.y + dy * t + normalY * offset,
+          radius: CELL_SIZE * (0.03 + random() * 0.035),
+          dark: random() < 0.5,
+        });
+      }
+    }
+  });
+  return speckles;
 }
 
 /** Infobulle positionnée au survol d'une tour posée ou d'un monstre, en pixels relatifs au canvas. */
@@ -242,6 +296,7 @@ export class GameBoard implements OnInit {
   private readonly spriteVersion = signal(0);
   protected readonly biomeColors = signal<MapBiomeColors>(DEFAULT_BIOME_COLORS);
   protected readonly decor = signal<readonly DecorItem[]>([]);
+  protected readonly pathTexture = signal<readonly PathSpeckle[]>([]);
   private projectiles: ProjectileView[] = [];
   private splashes: SplashView[] = [];
   private hitEffects: HitEffectView[] = [];
@@ -1082,6 +1137,7 @@ export class GameBoard implements OnInit {
         (response) => response.json() as Promise<GameMap>,
       );
       this.decor.set(generateDecor(map));
+      this.pathTexture.set(generatePathTexture(map));
       this.gameState.startRun(map, catalogEntry.startingData);
       this.matchService.configure(this.slots());
       this.lanesService.applySavedPlan(() => undefined);
@@ -1362,11 +1418,23 @@ export class GameBoard implements OnInit {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Chemins prédéfinis de la carte : couleur pleine en défense, simple référence estompée en attaque.
-    for (const path of map.paths) {
-      ctx.strokeStyle = isAttackPhase ? hexToRgba(biome.path, 0.25) : biome.path;
+    // Chemins prédéfinis de la carte : texturé en défense, simple référence estompée en attaque.
+    if (isAttackPhase) {
+      ctx.strokeStyle = hexToRgba(biome.path, 0.25);
       ctx.lineWidth = CELL_SIZE * 0.4;
-      this.strokePolyline(ctx, expandPathCells(path));
+      for (const path of map.paths) {
+        this.strokePolyline(ctx, expandPathCells(path));
+      }
+    } else {
+      for (const path of map.paths) {
+        this.drawTexturedPath(ctx, expandPathCells(path), biome.path);
+      }
+      for (const speckle of this.pathTexture()) {
+        ctx.fillStyle = speckle.dark ? 'rgba(0, 0, 0, 0.16)' : 'rgba(255, 255, 255, 0.18)';
+        ctx.beginPath();
+        ctx.arc(speckle.x, speckle.y, speckle.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // Portion des chemins atteignable par la tour sélectionnée (ou celle sur le point d'être posée).
@@ -1649,6 +1717,21 @@ export class GameBoard implements OnInit {
       ctx.arc(cx - r * 0.6, cy + r * 0.35, r * 0.6, 0, Math.PI * 2);
       ctx.fill();
     }
+  }
+
+  /** Dessine un chemin avec un léger relief : bordure sombre en dessous, remplissage clair par-dessus. */
+  private drawTexturedPath(
+    ctx: CanvasRenderingContext2D,
+    points: readonly GridCoord[],
+    color: string,
+  ): void {
+    ctx.strokeStyle = shadeColor(color, -0.4);
+    ctx.lineWidth = PATH_WIDTH * 1.3;
+    this.strokePolyline(ctx, points);
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = PATH_WIDTH;
+    this.strokePolyline(ctx, points);
   }
 
   private strokePolyline(ctx: CanvasRenderingContext2D, points: readonly GridCoord[]): void {

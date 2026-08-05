@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, isDevMode } from '@angular/core';
 import { TOWER_TYPES } from 'shared';
 import type { TowerType } from 'shared';
 import { Button } from '../../ui/button/button';
@@ -45,10 +45,10 @@ export class BoardHud {
   protected readonly lanes = this.lanesService.lanes;
   /** Vrai si au moins une voie composée n'a aucun monstre : bloque le lancement (CONCEPTION.md §5.3). */
   protected readonly hasEmptyLane = computed(() => this.lanes().some((lane) => lane.units.length === 0));
-  /** Debug : score de la vague en cours de composition, calculé à l'avance sans lancer l'épreuve. */
-  protected readonly attackScore = this.lanesService.attackScore;
-  /** Debug : score de la défense posée contre vagueCourante, calculé à l'avance sans lancer l'épreuve. */
-  protected readonly defenseScore = this.defenseService.defenseScore;
+  /** Debug (visible en dev uniquement) : score de la vague en cours de composition, calculé à l'avance sans lancer l'épreuve. */
+  protected readonly attackScore = computed(() => (isDevMode() ? this.lanesService.attackScore() : undefined));
+  /** Debug (visible en dev uniquement) : score de la défense posée contre vagueCourante, calculé à l'avance sans lancer l'épreuve. */
+  protected readonly defenseScore = computed(() => (isDevMode() ? this.defenseService.defenseScore() : undefined));
   /** Vie max du château : sert à distinguer un score de succès (très supérieur) d'un score d'échec sans dégât fatal. */
   protected readonly chateauMaxHp = this.gameState.chateauMaxHp;
   /** Vrai tant qu'une case (vide ou occupée) est choisie pour construire/gérer une tour. */
