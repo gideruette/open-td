@@ -217,6 +217,34 @@ export class DefenseSimulation {
     return this.shotsThisTick;
   }
 
+  /**
+   * Copie indépendante de l'état courant, pour prévisualiser un `step()` sans affecter la
+   * simulation réelle — permet à l'affichage de faire partir un projectile en anticipation du tick
+   * où il touchera réellement sa cible (voir `game-board.ts`), sans dupliquer la logique de tir.
+   */
+  clone(): DefenseSimulation {
+    const copy = Object.create(DefenseSimulation.prototype) as DefenseSimulation;
+    Object.assign(copy, {
+      tick: this.tick,
+      chateauHp: this.chateauHp,
+      monsters: this.monsters.map((monster) => ({ ...monster })),
+      lanes: this.lanes.map((lane) => ({ ...lane, spawnQueue: [...lane.spawnQueue] })),
+      towerCooldowns: new Map(this.towerCooldowns),
+      outcome: this.outcome,
+      monsterSequence: this.monsterSequence,
+      shotsThisTick: [...this.shotsThisTick],
+      breachCount: this.breachCount,
+      totalDamageDealt: this.totalDamageDealt,
+      towers: this.towers,
+      chateauMaxHp: this.chateauMaxHp,
+      monsterCatalog: this.monsterCatalog,
+      towerCatalog: this.towerCatalog,
+      ticksBetweenSpawns: this.ticksBetweenSpawns,
+      mode: this.mode,
+    });
+    return copy;
+  }
+
   /** Avance la simulation d'un tick. Retourne false si l'épreuve est terminée. */
   step(): boolean {
     if (this.outcome !== 'pending') {

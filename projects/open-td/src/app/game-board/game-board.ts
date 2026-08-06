@@ -14,7 +14,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import type { DefenseSimulation, MonsterInstance } from 'engine';
+import type { DefenseSimulation, MonsterInstance, ShotEvent } from 'engine';
 import {
   cellsBetween,
   expandPathCells,
@@ -69,7 +69,11 @@ const WORLD_SCALE = CELL_SIZE * Math.sqrt(3);
 const ORIGIN_X = (Math.sqrt(3) / 2) * CELL_SIZE + CANVAS_PAD;
 const ORIGIN_Y = CELL_SIZE + CANVAS_PAD;
 const TICK_INTERVAL_MS = 100;
-const PROJECTILE_DURATION_MS = 120;
+/**
+ * Doit valoir `TICK_INTERVAL_MS` : le projectile part en anticipation du tick où il touchera
+ * réellement sa cible (voir `predictNextTickShots`), pour arriver pile quand les hp baissent.
+ */
+const PROJECTILE_DURATION_MS = TICK_INTERVAL_MS;
 const SPLASH_DURATION_MS = 220;
 /** Durée du flash + recul affiché sur un monstre touché par un projectile. */
 const HIT_EFFECT_DURATION_MS = 180;
@@ -856,16 +860,11 @@ export class GameBoard implements OnInit {
 
     const firedAtMs = performance.now();
     const shots = trial.getShotsThisTick();
+    let hasNewAnimation = false;
     if (shots.length > 0) {
-      this.projectiles.push(
-        ...shots.map((shot) => ({
-          from: cellCenterPx(shot.towerPosition),
-          to: worldToPx(shot.targetPosition),
-          firedAtMs,
-        })),
-      );
-      // Le flash + recul apparaît sur le monstre visé à l'impact, une fois le projectile arrivé.
-      const impactAtMs = firedAtMs + PROJECTILE_DURATION_MS;
+      // Les hp du monstre visé sont déjà décrémentés à ce tick : le flash + recul doit apparaître
+      // immédiatement (et non à l'arrivée visuelle du projectile, déjà lancé au tick précédent en
+      // anticipation — voir plus bas) pour coïncider avec la baisse de hp.
       for (const shot of shots) {
         const targetId = this.findNearestMonsterId(trial, monsters, shot.targetPosition);
         if (!targetId) {
@@ -876,22 +875,42 @@ export class GameBoard implements OnInit {
         this.hitEffects.push({
           monsterId: targetId,
           angle: Math.atan2(targetPx.y - towerPx.y, targetPx.x - towerPx.x),
-          firedAtMs: impactAtMs,
+          firedAtMs,
         });
       }
       const splashShots = shots.filter((shot): shot is typeof shot & { splashRadius: number } =>
         Boolean(shot.splashRadius),
       );
       if (splashShots.length > 0) {
-        // L'explosion apparaît à l'impact, une fois le projectile arrivé sur sa cible.
+        // Idem : l'explosion coïncide avec la baisse de hp plutôt qu'avec l'arrivée du projectile.
         this.splashes.push(
           ...splashShots.map((shot) => ({
             position: worldToPx(shot.targetPosition),
             radiusPx: shot.splashRadius * WORLD_SCALE,
-            firedAtMs: impactAtMs,
+            firedAtMs,
           })),
         );
       }
+      hasNewAnimation = true;
+    }
+
+    if (running) {
+      // Anticipe les tirs du prochain tick : le projectile part dès maintenant pour arriver pile
+      // quand `trial.step()` appliquera réellement ses dégâts (voir `DefenseSimulation.clone()`).
+      const predictedShots = this.predictNextTickShots(trial);
+      if (predictedShots.length > 0) {
+        this.projectiles.push(
+          ...predictedShots.map((shot) => ({
+            from: cellCenterPx(shot.towerPosition),
+            to: worldToPx(shot.targetPosition),
+            firedAtMs,
+          })),
+        );
+        hasNewAnimation = true;
+      }
+    }
+
+    if (hasNewAnimation) {
       this.ensureProjectileAnimationRunning();
     }
 
@@ -902,7 +921,17 @@ export class GameBoard implements OnInit {
     this.concludeTrial(trial);
   }
 
+  /** Prévisualise, sans altérer `trial`, les tirs qui surviendront au tick suivant. */
+  private predictNextTickShots(trial: DefenseSimulation): readonly ShotEvent[] {
+    const preview = trial.clone();
+    preview.step();
+    return preview.getShotsThisTick();
+  }
+
   private concludeTrial(trial: DefenseSimulation): void {
+    // Une phase terminée ne doit laisser traîner ni projectile en vol, ni flash/explosion résiduels
+    // (visés sur des monstres qui n'existent plus une fois la phase suivante commencée).
+    this.clearProjectileEffects();
     const outcome = trial.getOutcome();
     // Capturé avant tout resolve*Success() : `phase()` change dès la résolution d'un succès.
     const phaseJustPlayed = this.phase() as 'attack' | 'defense';
@@ -1014,6 +1043,18 @@ export class GameBoard implements OnInit {
     this.messages.set(
       `L'IA (${failedLabel}) n'a pas trouvé de solution à temps : victoire pour les ${winnerLabel} !`,
     );
+  }
+
+  /** Stoppe l'animation en cours et efface projectiles, explosions et flashs affichés. */
+  private clearProjectileEffects(): void {
+    if (this.projectileAnimationHandle !== undefined) {
+      cancelAnimationFrame(this.projectileAnimationHandle);
+      this.projectileAnimationHandle = undefined;
+    }
+    this.projectiles = [];
+    this.splashes = [];
+    this.hitEffects = [];
+    this.draw();
   }
 
   /** Anime les projectiles en cours (indépendamment des ticks) jusqu'à ce qu'ils s'estompent. */
