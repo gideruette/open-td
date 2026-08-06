@@ -271,10 +271,13 @@ export class BoardLanesService {
     this.refreshAttackBudget();
   }
 
-  /** Supprime toutes les voies en cours de composition (chemins et monstres). */
+  /** Supprime toutes les voies en cours de composition (chemins et monstres) ; annule aussi un tracé en cours. */
   resetAttackPlan(): void {
-    if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
+    if (this.gameState.phase() !== 'attack' || this.trial.isRunning()) {
       return;
+    }
+    if (this.isDrawingPath()) {
+      this.cancelTracing();
     }
     this.clearLanes();
     this.messages.set(undefined);
@@ -325,7 +328,7 @@ export class BoardLanesService {
     if (path.length === 0) {
       if (isSpawnCell(map, coord)) {
         this.drawingPathState.set([coord]);
-        this.messages.set('Cliquez des cases adjacentes jusqu’au château.');
+        this.messages.set('Cliquez des cases jusqu’au château.');
         this.refreshAttackBudget();
         return;
       }
@@ -338,7 +341,7 @@ export class BoardLanesService {
         this.gameState.engine.addSpawn(spawn);
         this.gameState.refresh();
         this.drawingPathState.set([coord]);
-        this.messages.set('Nouveau spawn créé. Cliquez des cases adjacentes jusqu’au château.');
+        this.messages.set('Nouveau spawn créé. Cliquez des cases jusqu’au château.');
         this.refreshAttackBudget();
         return;
       }
@@ -386,7 +389,9 @@ export class BoardLanesService {
       const addedCellsCost =
         pathCellsCost([...existingPaths, newPath]) - pathCellsCost(existingPaths);
       if (addedCellsCost > this.budget.attack().remaining) {
-        this.messages.set('Chemin trop coûteux : budget d’attaque restant insuffisant pour ces cases.');
+        this.messages.set(
+          'Chemin trop coûteux : budget d’attaque restant insuffisant pour ces cases.',
+        );
         return;
       }
       const newLane: LaneDraft = { path: newPath, units: [] };
@@ -452,15 +457,14 @@ export class BoardLanesService {
       return;
     }
 
-    const wave =
-      (await playAttackPhase({
-        map,
-        towers: this.gameState.towers(),
-        attackBudget: this.gameState.engine.getAttackBudget(),
-        chateauMaxHp: this.gameState.chateauMaxHp(),
-        maxTime,
-        onBestFound: (best, info) => this.showBestSoFar(map, best, info),
-      })) ?? { lanes: [] };
+    const wave = (await playAttackPhase({
+      map,
+      towers: this.gameState.towers(),
+      attackBudget: this.gameState.engine.getAttackBudget(),
+      chateauMaxHp: this.gameState.chateauMaxHp(),
+      maxTime,
+      onBestFound: (best, info) => this.showBestSoFar(map, best, info),
+    })) ?? { lanes: [] };
     this.materializeWave(map, wave);
   }
 

@@ -27,7 +27,9 @@
   </div>
 
   <div class="board-status__actions">
-    <otd-board-reset [disabled]="trialRunning()" [label]="resetLabel()" (confirm)="onReset()" />
+    @if (resetVisible()) {
+      <otd-board-reset [label]="resetLabel()" (confirm)="onReset()" />
+    }
     <otd-board-launch />
     <otd-board-ai-solution />
   </div>

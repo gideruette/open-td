@@ -448,6 +448,19 @@ export class GameBoard implements OnInit {
       !this.isDrawingPath() && lanes.length > 0 && lanes.every((lane) => lane.units.length > 0)
     );
   });
+  /** Repli affiché au-dessus de la carte tant qu'aucune voie n'est composée en phase Attaque (à vous de jouer). */
+  protected readonly attackNoRouteHint = computed(() => {
+    if (this.phase() !== 'attack' || this.lanes().length > 0 || this.isDrawingPath()) {
+      return undefined;
+    }
+    if (this.isTrialRunning() || this.matchService.isOver() || this.matchService.isThinking()) {
+      return undefined;
+    }
+    if (this.matchService.currentMoverKind('attack') === 'ai') {
+      return undefined;
+    }
+    return 'Cliquez sur une case de bord pour ajouter un point d’arrivée des monstres, puis tracez un chemin jusqu’au château.';
+  });
 
   constructor() {
     this.preloadSprites();

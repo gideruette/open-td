@@ -5,6 +5,7 @@ import { BoardDefenseService } from '../board-defense.service';
 import { BoardEngineService } from '../board-engine.service';
 import { BoardLanesService } from '../board-lanes.service';
 import { BoardLaunch } from '../board-launch/board-launch';
+import { BoardMatchService } from '../board-match.service';
 import { BoardReset } from '../board-reset/board-reset';
 import { BoardTrialService } from '../board-trial.service';
 
@@ -22,11 +23,11 @@ export class BoardStatus {
   private readonly lanesService = inject(BoardLanesService);
   private readonly budgetService = inject(BoardBudgetService);
   private readonly trial = inject(BoardTrialService);
+  private readonly matchService = inject(BoardMatchService);
 
   protected readonly phase = this.gameState.phase;
   protected readonly palier = this.gameState.palier;
   protected readonly vagueCourante = this.gameState.vagueCourante;
-  protected readonly trialRunning = this.trial.isRunning;
 
   protected readonly budget = computed(() =>
     this.phase() === 'defense' ? this.budgetService.defense() : this.budgetService.attack(),
@@ -34,6 +35,14 @@ export class BoardStatus {
   protected readonly resetLabel = computed(() =>
     this.phase() === 'defense' ? 'Réinitialiser les Chevaliers' : 'Réinitialiser les Monstres',
   );
+  /** Masqué pendant qu'une épreuve tourne ou que l'IA joue la phase courante : aucune des deux ne se réinitialise. */
+  protected readonly resetVisible = computed(() => {
+    if (this.trial.isRunning()) {
+      return false;
+    }
+    const phase = this.phase();
+    return phase === 'resolution' || this.matchService.currentMoverKind(phase) !== 'ai';
+  });
 
   /** Réinitialise toute la défense (phase Défense) ou tout le plan d'attaque (phase Attaque). */
   protected onReset(): void {

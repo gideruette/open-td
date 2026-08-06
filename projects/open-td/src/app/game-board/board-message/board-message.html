@@ -1,8 +1,10 @@
-@if (message(); as msg) {
+@if (displayed(); as msg) {
   <p class="board-message" aria-live="polite">
     <span class="board-message__text">{{ msg }}</span>
-    <button type="button" class="board-message__close" (click)="dismiss()" aria-label="Fermer">
-      ×
-    </button>
+    @if (message()) {
+      <button type="button" class="board-message__close" (click)="dismiss()" aria-label="Fermer">
+        ×
+      </button>
+    }
   </p>
 }
