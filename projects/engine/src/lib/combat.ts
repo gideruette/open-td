@@ -150,6 +150,7 @@ export class DefenseSimulation {
   private monsterSequence = 0;
   private shotsThisTick: ShotEvent[] = [];
   private breachCount = 0;
+  private totalDamageDealt = 0;
 
   constructor(
     private readonly towers: readonly TowerInstance[],
@@ -191,6 +192,16 @@ export class DefenseSimulation {
    */
   getBreachCount(): number {
     return this.breachCount;
+  }
+
+  /**
+   * Dégâts totaux infligés aux monstres jusqu'ici, tours confondues (dégâts bruts appliqués dans
+   * `applyDamage`, y compris le surplus d'une frappe qui achève un monstre déjà proche de la mort) —
+   * utilisé par `phaseScore` pour départager des épreuves à égalité sur leur seul critère principal
+   * (vie du château, ou étalement une fois la phase réussie).
+   */
+  getTotalDamageDealt(): number {
+    return this.totalDamageDealt;
   }
 
   getMonsters(): readonly MonsterInstance[] {
@@ -355,7 +366,9 @@ export class DefenseSimulation {
   private applyDamage(monster: MonsterInstance, towerType: TowerType): void {
     const monsterType = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
     const armorMultiplier = towerType.armorBonus && monsterType?.armored ? towerType.armorBonus : 1;
-    monster.hp -= towerType.damage * armorMultiplier;
+    const damage = towerType.damage * armorMultiplier;
+    monster.hp -= damage;
+    this.totalDamageDealt += damage;
     if (towerType.slowFactor && towerType.slowDuration) {
       const resistance = monsterType?.slowResistance ?? 0;
       monster.slowMultiplier = Math.min(
@@ -459,6 +472,23 @@ export function spreadScore(
 const SPREAD_SCORE_BASE = 1_000_000;
 
 /**
+ * Vie cumulée des monstres composant `wave` (files de spawn initiales, sans compter les unités
+ * générées en cours de route par scission — `splitOnDeath`) : plafond utilisé par `phaseScore`
+ * pour normaliser les dégâts infligés aux monstres en une fraction de `[0, 1]`.
+ */
+function totalMonsterHp(wave: Wave, monsterCatalog: readonly MonsterType[]): number {
+  return wave.lanes.reduce(
+    (total, lane) =>
+      total +
+      lane.units.reduce((laneTotal, unit) => {
+        const type = monsterCatalog.find((candidate) => candidate.id === unit.type);
+        return laneTotal + (type?.hp ?? 0);
+      }, 0),
+    0,
+  );
+}
+
+/**
  * Score d'une épreuve (défense ou attaque), obtenu en rejouant l'épreuve jusqu'à son terme
  * (CONCEPTION.md §12 « Scoring »). Deux régimes distincts :
  * - Échec : vie du château restante à la fin de l'épreuve — en défense, le château a encaissé au
@@ -473,6 +503,17 @@ const SPREAD_SCORE_BASE = 1_000_000;
  *   suivant (moins de cases libres où tracer une route ou poser une tour, précisément là où ça
  *   compte le plus). `SPREAD_SCORE_BASE` assure que ce score reste toujours strictement meilleur
  *   qu'un score d'échec.
+ *
+ * Dans les deux régimes, un bonus supplémentaire (`damageBonus`, dans `[0, 1]`) récompense les
+ * dégâts infligés aux monstres pendant l'épreuve — sans jamais renverser un écart de vie de
+ * château ou d'étalement, seulement départager les cas à égalité sur ce seul critère, qui sont
+ * fréquents (beaucoup de forteresses différentes laissent passer exactement les mêmes monstres,
+ * pour la même vie de château restante, sans que l'algorithme génétique n'ait alors la moindre
+ * information pour distinguer la meilleure des deux). Il est toujours ajouté tel quel, jamais
+ * inversé selon le mode : plus de dégâts infligés est toujours une meilleure défense (score plus
+ * haut, favorisé par le tri décroissant de `fittestDefenses`) et toujours une moins bonne attaque
+ * (score plus haut, défavorisé par le tri croissant de `fittestWaves`) — l'attaque cherche au
+ * contraire les monstres qui traversent la défense sans dégât.
  */
 export function phaseScore(
   towers: readonly TowerInstance[],
@@ -493,9 +534,14 @@ export function phaseScore(
     mode,
   );
   simulation.runToCompletion();
+
+  const maxDamage = totalMonsterHp(wave, monsterCatalog);
+  const damageBonus = maxDamage > 0 ? Math.min(1, simulation.getTotalDamageDealt() / maxDamage) : 0;
+
   if (simulation.getOutcome() === 'failure') {
-    return simulation.getChateauHp();
+    return simulation.getChateauHp() + damageBonus;
   }
   const spread = spreadScore(towers, wave, chateau);
-  return mode === 'defense' ? SPREAD_SCORE_BASE + spread : -(SPREAD_SCORE_BASE + spread);
+  const signedBase = mode === 'defense' ? SPREAD_SCORE_BASE + spread : -(SPREAD_SCORE_BASE + spread);
+  return signedBase + damageBonus;
 }
