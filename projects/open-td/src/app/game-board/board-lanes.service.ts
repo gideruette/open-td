@@ -6,10 +6,10 @@ import {
   isBorderCell,
   isChateauCell,
   isSpawnCell,
-  isValidPathStep,
   pathCellsCost,
   phaseScore,
   playAttackPhase,
+  shortestPath,
 } from 'engine';
 import { findMonsterType } from 'shared';
 import type { GameMap, GridCoord, MapPath, MapSpawn, Wave } from 'shared';
@@ -345,18 +345,17 @@ export class BoardLanesService {
       return;
     }
 
-    // Case non adjacente : on comble automatiquement les cases traversées (CONCEPTION.md §5.3).
-    const steps = cellsBetween(last, coord);
+    // Case non adjacente : on comble automatiquement les cases traversées, en contournant les
+    // tours et rivières plutôt qu'en traçant la corde droite (CONCEPTION.md §5.3).
+    const steps = shortestPath(map, this.gameState.towers(), last, coord);
+    if (!steps) {
+      this.messages.set('Case inatteignable : aucun chemin libre de tours et rivières.');
+      return;
+    }
     const filledCells: GridCoord[] = [];
-    let cursor = last;
     let reachedChateau = false;
     for (const step of steps) {
-      if (!isValidPathStep(map, this.gameState.towers(), cursor, step)) {
-        this.messages.set('Case invalide : doit être dans la grille et libre de tour.');
-        return;
-      }
       filledCells.push(step);
-      cursor = step;
       if (isChateauCell(map, step)) {
         reachedChateau = true;
         break;

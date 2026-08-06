@@ -1,6 +1,13 @@
 import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
 import { MONSTER_TYPES, TOWER_TYPES, hexToWorld } from 'shared';
-import { PATH_CELL_COST, expandPathCells, pathCellsCost, pathLength, pointAtDistance } from './path';
+import {
+  PATH_CELL_COST,
+  expandPathCells,
+  pathCellsCost,
+  pathLength,
+  pointAtDistance,
+  shortestPath,
+} from './path';
 
 /** Candidat de ciblage : vue minimale d'un monstre utile au choix de la cible d'une tour. */
 export interface TargetCandidate {
@@ -69,7 +76,13 @@ export function waveCost(
       }, 0),
     0,
   );
-  return monstersCost + pathCellsCost(wave.lanes.map((lane) => lane.path), pathCellCost);
+  return (
+    monstersCost +
+    pathCellsCost(
+      wave.lanes.map((lane) => lane.path),
+      pathCellCost,
+    )
+  );
 }
 
 /**
@@ -247,7 +260,8 @@ export class DefenseSimulation {
         continue;
       }
       const nextType = this.monsterCatalog.find((candidate) => candidate.id === lane.spawnQueue[0]);
-      lane.spawnProgress += nextType && nextType.speed > 0 ? nextType.speed : SPAWN_GAP_REFERENCE_SPEED;
+      lane.spawnProgress +=
+        nextType && nextType.speed > 0 ? nextType.speed : SPAWN_GAP_REFERENCE_SPEED;
       if (lane.spawnProgress < spawnThreshold) {
         continue;
       }
@@ -345,7 +359,10 @@ export class DefenseSimulation {
     monster.hp -= towerType.damage * armorMultiplier;
     if (towerType.slowFactor && towerType.slowDuration) {
       const resistance = monsterType?.slowResistance ?? 0;
-      monster.slowMultiplier = Math.min(1, towerType.slowFactor + (1 - towerType.slowFactor) * resistance);
+      monster.slowMultiplier = Math.min(
+        1,
+        towerType.slowFactor + (1 - towerType.slowFactor) * resistance,
+      );
       monster.slowUntilTick = this.tick + towerType.slowDuration;
     }
   }
@@ -455,7 +472,15 @@ export function phaseScore(
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
   mode: SimulationMode = 'defense',
 ): number {
-  const simulation = new DefenseSimulation(towers, wave, chateauMaxHp, monsterCatalog, towerCatalog, undefined, mode);
+  const simulation = new DefenseSimulation(
+    towers,
+    wave,
+    chateauMaxHp,
+    monsterCatalog,
+    towerCatalog,
+    undefined,
+    mode,
+  );
   simulation.runToCompletion();
   if (simulation.getOutcome() === 'failure') {
     return simulation.getChateauHp();

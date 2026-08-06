@@ -1,6 +1,6 @@
 import type { GameMap, GridCoord, MapPath, MapSpawn, TowerInstance } from 'shared';
 import { hexDistance, hexLinedraw, hexNeighbors, hexToWorld } from 'shared';
-import { findTowerAt, isRiverCell, isWithinGrid } from './fortress';
+import { findTowerAt, isChateauCell, isRiverCell, isWithinGrid } from './fortress';
 
 function segmentLength(a: GridCoord, b: GridCoord): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -234,7 +234,10 @@ export function shortestPath(
  * précédent est simplement ignoré, plutôt que de faire échouer toute la route — utile pour
  * composer des détours ou recombiner des chemins à partir de points tirés au hasard (IA
  * d'attaque). `undefined` seulement si `to` reste inatteignable depuis le dernier jalon valide
- * (même sémantique que `shortestPath`).
+ * (même sémantique que `shortestPath`). Le château n'étant pas un obstacle pour `shortestPath`, un
+ * tronçon vers un jalon (ou `to`) situé au-delà peut le traverser en chemin : la route s'arrête
+ * dès cette case, jalons et tronçon final restants abandonnés — même règle que le tracé manuel
+ * (`handleTracingClick`).
  */
 export function routeThroughWaypoints(
   map: GameMap,
@@ -250,13 +253,23 @@ export function routeThroughWaypoints(
     if (!segment) {
       continue;
     }
-    cells.push(...segment);
+    for (const step of segment) {
+      cells.push(step);
+      if (isChateauCell(map, step)) {
+        return cells;
+      }
+    }
     cursor = waypoint;
   }
   const finalSegment = shortestPath(map, towers, cursor, to);
   if (!finalSegment) {
     return undefined;
   }
-  cells.push(...finalSegment);
+  for (const step of finalSegment) {
+    cells.push(step);
+    if (isChateauCell(map, step)) {
+      break;
+    }
+  }
   return cells;
 }
