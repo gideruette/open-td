@@ -10,11 +10,14 @@ import {
   phaseScore,
   playAttackPhase,
   shortestPath,
+  simplifyPathCells,
 } from 'engine';
+import type { ProgressInfo } from 'engine';
 import { findMonsterType } from 'shared';
 import type { GameMap, GridCoord, MapPath, MapSpawn, Wave } from 'shared';
 import { BoardBudgetService } from './board-budget.service';
 import { BoardEngineService } from './board-engine.service';
+import { BoardMatchService } from './board-match.service';
 import { BoardMessageService } from './board-message.service';
 import { BoardTrialService } from './board-trial.service';
 import type { BoardTool, LaneDraft } from './board-types';
@@ -34,6 +37,7 @@ export interface MonsterAppendEvent {
 export class BoardLanesService {
   private readonly gameState = inject(BoardEngineService);
   private readonly budget = inject(BoardBudgetService);
+  private readonly matchService = inject(BoardMatchService);
   private readonly messages = inject(BoardMessageService);
   private readonly trial = inject(BoardTrialService);
 
@@ -364,7 +368,7 @@ export class BoardLanesService {
       }
     }
 
-    const nextPath = [...path, ...filledCells];
+    const nextPath = simplifyPathCells([...path, ...filledCells]);
     if (reachedChateau) {
       const existingPaths = this.lanesState().map((lane) => lane.path);
       if (!hasUniqueCell(nextPath, existingPaths)) {
@@ -406,7 +410,7 @@ export class BoardLanesService {
    * par l'IA Attaque via l'algorithme génétique (`evolveAttackWave` dans `engine`) — sert à
    * tester l'IA sans composer à la main.
    */
-  addRandomLane(): void {
+  async addRandomLane(): Promise<void> {
     if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
       return;
     }
@@ -418,11 +422,16 @@ export class BoardLanesService {
       return;
     }
 
-    const wave = evolveAttackWave(
+    const wave = await evolveAttackWave(
       map,
       this.gameState.towers(),
       this.gameState.engine.getAttackBudget(),
       this.gameState.chateauMaxHp(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (best, info) => this.showBestSoFar(map, best, info),
     );
     this.materializeWave(map, wave);
   }
@@ -430,9 +439,11 @@ export class BoardLanesService {
   /**
    * Fait jouer l'ordinateur la phase Attaque à la place du joueur (case IA du système de slots) :
    * vide les voies en cours et les remplace par la vague trouvée par `playAttackPhase` (point
-   * d'entrée IA officiel, algorithme génétique), avec `maxTime` ms de recherche.
+   * d'entrée IA officiel, algorithme génétique), avec `maxTime` ms de recherche. Pendant la
+   * recherche, la carte affiche déjà la meilleure vague trouvée jusqu'ici (`onBestFound`) plutôt
+   * que d'attendre le résultat final.
    */
-  playAiAttackTurn(maxTime: number): void {
+  async playAiAttackTurn(maxTime: number): Promise<void> {
     this.clearLanes();
 
     const map = this.gameState.map();
@@ -441,13 +452,31 @@ export class BoardLanesService {
       return;
     }
 
-    const wave = playAttackPhase({
-      map,
-      towers: this.gameState.towers(),
-      attackBudget: this.gameState.engine.getAttackBudget(),
-      chateauMaxHp: this.gameState.chateauMaxHp(),
-      maxTime,
-    }) ?? { lanes: [] };
+    const wave =
+      (await playAttackPhase({
+        map,
+        towers: this.gameState.towers(),
+        attackBudget: this.gameState.engine.getAttackBudget(),
+        chateauMaxHp: this.gameState.chateauMaxHp(),
+        maxTime,
+        onBestFound: (best, info) => this.showBestSoFar(map, best, info),
+      })) ?? { lanes: [] };
+    this.materializeWave(map, wave);
+  }
+
+  /**
+   * Affiche sur la carte la meilleure vague trouvée jusqu'ici en cours de recherche IA (rappelé
+   * au fil de la recherche, voir `onBestFound`) : vide les voies affichées et les remplace par
+   * `wave`, comme le ferait le résultat final (`materializeWave`), mais purge aussi les spawns
+   * orphelins qu'un individu précédent aurait pu créer sans route pour les tenir (chaque nouveau
+   * meilleur individu n'emprunte pas forcément le même spawn que le précédent). Publie aussi
+   * `info` (nombre d'individus notés, score du meilleur) via `BoardMatchService`, pour le HUD
+   * debug.
+   */
+  private showBestSoFar(map: GameMap, wave: Wave, info: ProgressInfo): void {
+    this.matchService.reportAiProgress(info);
+    this.clearLanes();
+    this.gameState.engine.pruneOrphanSpawns();
     this.materializeWave(map, wave);
   }
 

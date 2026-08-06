@@ -46,7 +46,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'clairiere-02',
     name: 'Clairière',
-    description: 'Petite carte resserrée avec un seul spawn : idéale pour découvrir le jeu.',
+    description: 'Petite carte resserrée, idéale pour découvrir le jeu.',
     difficulty: 'facile',
     biome: 'clairiere',
     grid: { cols: 16, rows: 12, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
@@ -61,7 +61,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'forest-01',
     name: 'Forêt',
-    description: 'Un spawn bas, deux chemins en tenailles autour du château.',
+    description: 'Carte plus large et un peu plus difficile',
     difficulty: 'modérée',
     biome: 'foret',
     grid: { cols: 32, rows: 24, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
@@ -76,8 +76,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'marais-03',
     name: 'Marais',
-    description:
-      'Deux spawns opposés (haut et bas) : la pression peut venir des deux côtés à la fois.',
+    description: 'Carte large et basse, avec une rivière sinueuse qui coupe le plateau en deux.',
     difficulty: 'modérée',
     biome: 'marais',
     grid: { cols: 24, rows: 18, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
@@ -92,7 +91,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'toundra-05',
     name: 'Toundra',
-    description: 'Carte large et basse : deux longues voies encerclantes depuis le bas.',
+    description: 'Carte large et basse, avec une rivière sinueuse qui coupe le plateau en deux.',
     difficulty: 'difficile',
     biome: 'toundra',
     grid: { cols: 48, rows: 16, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
@@ -107,7 +106,7 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'montagne-04',
     name: 'Montagne',
-    description: 'Grande carte, trois spawns (haut et bas) et trois voies d’assaut simultanées.',
+    description: 'Grande carte',
     difficulty: 'difficile',
     biome: 'montagne',
     grid: { cols: 40, rows: 30, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },

@@ -30,7 +30,7 @@ const MAX_PALIERS = 100;
 describe('Simulation IA vs IA', () => {
   it(
     "joue une partie jusqu'au bout et logue le résultat",
-    () => {
+    async () => {
       const startingData = findMapCatalogEntry('clairiere-02')!.startingData;
       const engine = new GameEngine();
       engine.startRun(MAP, startingData);
@@ -41,7 +41,7 @@ describe('Simulation IA vs IA', () => {
       for (let i = 0; i < MAX_PALIERS && !winner; i++) {
         // Plus de vague #0 pré-construite (CONCEPTION.md §3) : le palier 1 est une vraie phase
         // Attaque, jouée contre les tours actuellement posées (aucune au tout premier tour).
-        const attackWave: Wave = evolveAttackWave(
+        const attackWave: Wave = await evolveAttackWave(
           MAP,
           engine.getTowers(),
           engine.getAttackBudget(),
@@ -65,13 +65,13 @@ describe('Simulation IA vs IA', () => {
 
         const wave = engine.getVagueCourante() as Wave;
         const towers =
-          playDefensePhase({
+          (await playDefensePhase({
             map: MAP,
             wave,
             defenseBudget: engine.getDefenseBudget(),
             chateauMaxHp: engine.getChateauMaxHp(),
             maxTime: AI_THINK_TIME_MS,
-          }) ?? [];
+          })) ?? [];
         for (const tower of towers) {
           engine.placeTower(tower.typeId, tower.position);
         }

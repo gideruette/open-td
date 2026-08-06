@@ -9,11 +9,13 @@ import {
   effect,
   inject,
   input,
+  isDevMode,
   output,
   signal,
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { DecimalPipe } from '@angular/common';
 import type { DefenseSimulation, MonsterInstance, ShotEvent } from 'engine';
 import {
   cellsBetween,
@@ -295,7 +297,7 @@ interface HitEffectView {
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [BoardHud, BoardMatchResult, BoardMessage, BoardStatus, Tooltip],
+  imports: [BoardHud, BoardMatchResult, BoardMessage, BoardStatus, DecimalPipe, Tooltip],
   providers: [
     BoardBudgetService,
     BoardEngineService,
@@ -374,6 +376,10 @@ export class GameBoard implements OnInit {
   protected readonly matchOutcome = this.matchService.outcome;
   /** Vrai pendant que l'IA calcule son coup : affiche un loader plutôt qu'un changement de phase brutal. */
   protected readonly aiThinking = this.matchService.isThinking;
+  /** Nombre d'individus notés et score du meilleur trouvé jusqu'ici pendant une recherche IA en cours. */
+  protected readonly aiProgress = this.matchService.aiProgress;
+  /** Debug uniquement (`isDevMode()`) : affiche `aiProgress` sous le loader « L'IA réfléchit... ». */
+  protected readonly showAiDebug = computed(() => isDevMode() && this.aiProgress() !== undefined);
   /** Vrai quand l'écran de fin de partie est replié pour laisser inspecter la carte avant de rejouer. */
   protected readonly inspectingMap = signal(false);
 
@@ -1001,19 +1007,21 @@ export class GameBoard implements OnInit {
       return;
     }
     this.matchService.setThinking(true);
-    // Laisse Angular peindre le loader « L'IA réfléchit... » avant le calcul bloquant.
-    setTimeout(() => this.runAiTurn(), 50);
+    // Laisse Angular peindre le loader « L'IA réfléchit... » avant de lancer la recherche —
+    // celle-ci met ensuite la carte à jour en direct avec le meilleur coup trouvé à chaque
+    // génération (`onBestFound`), jusqu'au résultat final.
+    setTimeout(() => void this.runAiTurn(), 50);
   }
 
-  private runAiTurn(): void {
+  private async runAiTurn(): Promise<void> {
     const phaseNow = this.phase();
     if (phaseNow === 'defense') {
-      this.defenseService.playAiDefenseTurn(AI_THINK_TIME_MS);
+      await this.defenseService.playAiDefenseTurn(AI_THINK_TIME_MS);
       this.matchService.setThinking(false);
       this.startTrial();
       return;
     }
-    this.lanesService.playAiAttackTurn(AI_THINK_TIME_MS);
+    await this.lanesService.playAiAttackTurn(AI_THINK_TIME_MS);
     this.matchService.setThinking(false);
     if (!this.lanes().some((lane) => lane.units.length > 0)) {
       // L'IA n'a rien pu composer : échec direct, aucune épreuve à lancer.

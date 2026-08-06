@@ -101,38 +101,51 @@ describe('enforceBudget', () => {
 });
 
 describe('evolveAttackWave', () => {
-  it('trouve une vague au moins aussi bonne qu\'un tirage aléatoire (détruit le château, puis s\'étale davantage à destruction égale)', () => {
+  it('trouve une vague au moins aussi bonne qu\'un tirage aléatoire (détruit le château, puis s\'étale davantage à destruction égale)', async () => {
     const baseline = initRandomWave(map, [], 200, [gobelin]);
     const baselineScore = phaseScore([], baseline, 50, map.chateau, [gobelin], undefined, 'attack');
 
-    const evolved = evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300);
+    const evolved = await evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300);
     const evolvedScore = phaseScore([], evolved, 50, map.chateau, [gobelin], undefined, 'attack');
 
     expect(evolvedScore).toBeLessThanOrEqual(baselineScore);
   });
 
-  it('reste une vague vide sans budget', () => {
-    const evolved = evolveAttackWave(map, [], 0, 50, [gobelin], 3, 10, 50);
+  it('reste une vague vide sans budget', async () => {
+    const evolved = await evolveAttackWave(map, [], 0, 50, [gobelin], 3, 10, 50);
     expect(evolved.lanes).toEqual([]);
   });
 
-  it('ne dépasse jamais le budget d\'attaque, même après croisement de plusieurs voies', () => {
+  it('ne dépasse jamais le budget d\'attaque, même après croisement de plusieurs voies', async () => {
     const attackBudget = 200;
-    const evolved = evolveAttackWave(map, [], attackBudget, 50, [gobelin], 3, 15, 300);
+    const evolved = await evolveAttackWave(map, [], attackBudget, 50, [gobelin], 3, 15, 300);
     expect(waveCost(evolved, [gobelin])).toBeLessThanOrEqual(attackBudget);
   });
 
   it(
     'reste borné par maxTime même avec un maxLanes/populationSize disproportionnés (la construction de la ' +
       "population initiale ne doit jamais échapper au budget de temps, sous peine de bloquer l'IU)",
-    () => {
+    async () => {
       const maxTime = 200;
       const start = Date.now();
-      evolveAttackWave(map, [], 200, 50, [gobelin], 100, 1000, maxTime);
+      await evolveAttackWave(map, [], 200, 50, [gobelin], 100, 1000, maxTime);
       // Large marge sur maxTime : une seule vague en cours de construction peut légèrement le dépasser,
       // mais rien de comparable au temps qu'exigerait la construction complète de 2 000 candidats.
       expect(Date.now() - start).toBeLessThan(maxTime * 5);
     },
     5000,
   );
+
+  it('rappelle onBestFound à la fin de chaque génération avec la meilleure vague trouvée jusqu\'ici', async () => {
+    const seenScores: number[] = [];
+    const evolved = await evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300, (best) => {
+      seenScores.push(phaseScore([], best, 50, map.chateau, [gobelin], undefined, 'attack'));
+    });
+    expect(seenScores.length).toBeGreaterThan(0);
+    const evolvedScore = phaseScore([], evolved, 50, map.chateau, [gobelin], undefined, 'attack');
+    // La sélection ne fait jamais reculer le meilleur score au fil des générations (`fittestWaves`
+    // conserve toujours les meilleurs individus, parents compris) : le dernier score publié ne peut
+    // pas être meilleur que le résultat final.
+    expect(seenScores[seenScores.length - 1]).toBeGreaterThanOrEqual(evolvedScore);
+  });
 });

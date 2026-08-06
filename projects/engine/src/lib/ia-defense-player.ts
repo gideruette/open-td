@@ -1,8 +1,8 @@
 import type { GameMap, GridCoord, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
-import { MONSTER_TYPES, TOWER_TYPES, hexDistance } from 'shared';
+import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexNeighbors } from 'shared';
 import { phaseScore } from './combat';
-import { canPlaceTower } from './fortress';
-import { shuffled } from './ia-player';
+import { canOccupyCell, canPlaceTower } from './fortress';
+import { type ProgressInfo, type ProgressReporter, createProgressReporter, shuffled } from './ia-player';
 import { expandPathCells } from './path';
 
 /**
@@ -18,6 +18,8 @@ export interface DefensePlayerInput {
   towerCatalog?: readonly TowerType[];
   /** Budget de temps (ms) alloué à la recherche génétique — voir `evolveDefense`. */
   maxTime?: number;
+  /** Rappelé au fil de la recherche avec la meilleure défense trouvée jusqu'ici — voir `evolveDefense`. */
+  onBestFound?: (best: readonly TowerInstance[], info: ProgressInfo) => void;
 }
 
 /** Toutes les cases traversées par au moins une voie de la vague à tenir. */
@@ -175,11 +177,16 @@ const MUTATION_RATE = 0.15;
 /**
  * Mute une forteresse fille pour réintroduire de la diversité que le seul croisement ne peut pas
  * produire (il ne fait que recombiner des tours déjà présentes dans la population) : avec
- * probabilité `MUTATION_RATE`, remplace une tour tirée au hasard par une nouvelle tour aléatoire
- * (position et type, `initRandomTower`) — calculée avec le budget encore disponible une fois les
- * autres tours payées, pour ne jamais dépasser `defenseBudget` par la seule mutation. Si aucun
- * remplacement n'est possible (plus de case libre à portée), la tour mutée est simplement retirée.
- * Inchangée si la forteresse n'a aucune tour.
+ * probabilité `MUTATION_RATE`, altère au hasard une tour tirée au hasard d'une de ces trois façons
+ * — jamais plusieurs à la fois : déplacement vers une case adjacente libre (`hexNeighbors`,
+ * gratuit — `canOccupyCell` ne vérifie que la géométrie, pas le budget, une tour déjà payée le
+ * reste en changeant de case), suppression pure et simple, ou changement de type sur la même case
+ * (`canPlaceTower`, avec le budget encore disponible une fois les autres tours payées, pour ne
+ * jamais dépasser `defenseBudget` par la seule mutation ; le nouveau type doit en outre rester à
+ * portée d'au moins une voie de la vague à tenir, sans quoi la tour mutée ne tirerait plus sur
+ * aucun monstre). Si la mutation choisie n'a aucune cible valide (aucune case adjacente libre,
+ * aucun type finançable et à portée), la forteresse est inchangée plutôt que de retomber sur une
+ * autre mutation. Inchangée si la forteresse n'a aucune tour.
  */
 function mutateDefense(
   towers: readonly TowerInstance[],
@@ -193,10 +200,32 @@ function mutateDefense(
   }
 
   const index = Math.floor(Math.random() * towers.length);
+  const tower = towers[index];
   const others = towers.filter((_, i) => i !== index);
+  const roll = Math.random();
+
+  if (roll < 1 / 3) {
+    for (const neighbor of shuffled(hexNeighbors(tower.position))) {
+      if (canOccupyCell(map, others, neighbor).ok) {
+        return [...others, { ...tower, position: neighbor }];
+      }
+    }
+    return [...towers];
+  }
+
+  if (roll < 2 / 3) {
+    return others;
+  }
+
+  const routes = routeCells(wave);
   const remainingBudget = Math.max(0, defenseBudget - defenseCost(others, towerCatalog));
-  const mutatedTower = initRandomTower(map, others, wave, remainingBudget, towerCatalog);
-  return mutatedTower ? [...others, mutatedTower] : others;
+  for (const type of shuffled(towerCatalog)) {
+    const inRange = routes.some((cell) => hexDistance(cell, tower.position) <= type.range);
+    if (inRange && canPlaceTower(map, others, type, tower.position, remainingBudget).ok) {
+      return [...others, { ...tower, typeId: type.id }];
+    }
+  }
+  return [...towers];
 }
 
 /**
@@ -237,8 +266,23 @@ function scoreDefense(
   return phaseScore(towers, wave, chateauMaxHp, chateau, monsterCatalog, towerCatalog, 'defense');
 }
 
-/** Trie `candidates` par score décroissant (mode 'defense') et n'en garde que les `count` meilleures. */
-function fittestDefenses(
+/** Meilleure défense trouvée jusqu'ici (au sens de `scoreDefense`, score décroissant) et son score. */
+interface BestDefense {
+  towers: TowerInstance[];
+  score: number;
+}
+
+/**
+ * Trie `candidates` par score décroissant (mode 'defense') et n'en garde que les `count`
+ * meilleures. L'essentiel du temps de calcul d'`evolveDefense` se passe ici (jusqu'à
+ * `2 * populationSize` forteresses à noter pour la seule population initiale, chacune une
+ * simulation de combat complète via `phaseScore`) plutôt qu'entre deux générations : `reporter`
+ * est donc rappelé à la volée, forteresse par forteresse, plutôt qu'une seule fois en fin de tri
+ * — voir `fittestWaves`, pendant équivalent côté Attaque, pour le détail du raisonnement
+ * (notamment sur `seed`, qui évite qu'un meilleur score déjà connu ne semble reculer pendant le
+ * parcours d'un nouveau lot).
+ */
+async function fittestDefenses(
   candidates: readonly (readonly TowerInstance[])[],
   count: number,
   wave: Wave,
@@ -246,15 +290,27 @@ function fittestDefenses(
   chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
   towerCatalog: readonly TowerType[],
-): TowerInstance[][] {
-  return candidates
-    .map((towers) => ({
-      towers: [...towers],
-      score: scoreDefense(towers, wave, chateauMaxHp, chateau, monsterCatalog, towerCatalog),
-    }))
+  iterations: { count: number },
+  reporter: ProgressReporter<readonly TowerInstance[]>,
+  seed: BestDefense | undefined,
+): Promise<{ population: TowerInstance[][]; best: BestDefense | undefined }> {
+  const scored: BestDefense[] = [];
+  let best = seed;
+  for (const candidate of candidates) {
+    const towers = [...candidate];
+    const score = scoreDefense(towers, wave, chateauMaxHp, chateau, monsterCatalog, towerCatalog);
+    scored.push({ towers, score });
+    iterations.count++;
+    if (!best || score > best.score) {
+      best = { towers, score };
+    }
+    await reporter.report(best.towers, { iterations: iterations.count, score: best.score });
+  }
+  const population = scored
     .sort((a, b) => b.score - a.score)
     .slice(0, count)
     .map((entry) => entry.towers);
+  return { population, best };
 }
 
 const DEFAULT_POPULATION_SIZE = 20;
@@ -267,9 +323,16 @@ const DEFAULT_POPULATION_SIZE = 20;
  * temps les forteresses filles obtenues (`mutateDefense`) pour préserver la diversité génétique,
  * on les ramène dans le budget de défense (`enforceDefenseBudget`), puis on ne garde que les
  * `populationSize` meilleures parmi population + filles réunies. Boucle jusqu'à épuisement de
- * `maxTime` ms, puis retourne la meilleure forteresse trouvée.
+ * `maxTime` ms, puis retourne la meilleure forteresse trouvée. `onBestFound`, s'il est fourni, est
+ * rappelé au fil de la notation de chaque lot d'individus (`fittestDefenses`, throttlé à ~60 fps
+ * par `createProgressReporter`) avec la meilleure forteresse trouvée jusqu'ici et le nombre
+ * d'individus notés — permet à l'UI d'afficher la progression de la recherche pendant que l'IA
+ * « réfléchit » plutôt que d'attendre le résultat final. La notation de la population initiale
+ * (jusqu'à `2 * populationSize` forteresses) domine généralement le temps de calcul total,
+ * largement avant la première génération — c'est pourquoi `onBestFound` y est déjà rappelé, pas
+ * seulement entre deux générations.
  */
-export function evolveDefense(
+export async function evolveDefense(
   map: GameMap,
   wave: Wave,
   defenseBudget: number,
@@ -278,8 +341,12 @@ export function evolveDefense(
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
   populationSize: number = DEFAULT_POPULATION_SIZE,
   maxTime: number = 100,
-): TowerInstance[] {
+  onBestFound?: (best: readonly TowerInstance[], info: ProgressInfo) => void,
+): Promise<TowerInstance[]> {
   const start = Date.now();
+  const iterations = { count: 0 };
+  const reporter: ProgressReporter<readonly TowerInstance[]> = createProgressReporter(onBestFound);
+  let best: BestDefense | undefined;
 
   // Bornée par maxTime comme la boucle principale ci-dessous : un populationSize trop ambitieux
   // pour le temps imparti dégrade la qualité plutôt que de dépasser le budget de temps.
@@ -287,7 +354,7 @@ export function evolveDefense(
   while (initialCandidates.length < 2 * populationSize && Date.now() - start < maxTime) {
     initialCandidates.push(initRandomDefense(map, wave, defenseBudget, towerCatalog));
   }
-  let population = fittestDefenses(
+  const initialResult = await fittestDefenses(
     initialCandidates,
     populationSize,
     wave,
@@ -295,7 +362,12 @@ export function evolveDefense(
     map.chateau,
     monsterCatalog,
     towerCatalog,
+    iterations,
+    reporter,
+    best,
   );
+  let population = initialResult.population;
+  best = initialResult.best;
 
   while (population.length > 0 && Date.now() - start < maxTime) {
     const children = Array.from({ length: population.length }, () => {
@@ -304,7 +376,7 @@ export function evolveDefense(
       const mutated = mutateDefense(child, map, wave, defenseBudget, towerCatalog);
       return enforceDefenseBudget(mutated, defenseBudget, towerCatalog);
     });
-    population = fittestDefenses(
+    const result = await fittestDefenses(
       [...population, ...children],
       populationSize,
       wave,
@@ -312,18 +384,35 @@ export function evolveDefense(
       map.chateau,
       monsterCatalog,
       towerCatalog,
+      iterations,
+      reporter,
+      best,
     );
+    population = result.population;
+    best = result.best;
   }
 
   return population[0] ?? [];
 }
 
+/** Nombre d'individus conservés par génération pour `playDefensePhase` — voir sa note. */
+const OFFICIAL_POPULATION_SIZE = 50;
+
 /**
  * Fait jouer l'ordinateur la phase Défense : pose des tours pour tenir la vague donnée, via
  * l'algorithme génétique `evolveDefense` (population de forteresses candidates, notées avec
  * `phaseScore` en mode 'defense', puis sélection/croisement/mutation au fil des générations).
+ *
+ * `OFFICIAL_POPULATION_SIZE` (jusqu'à `2 * populationSize` forteresses à noter pour la seule
+ * population initiale, chacune une simulation de combat complète) est volontairement modeste : une
+ * population de 500 laissait la notation de la population initiale consommer `maxTime` à elle
+ * seule (mesuré jusqu'à 7 s pour un budget de 2 s), sans qu'aucune génération n'ait le temps de
+ * tourner — la recherche dégénérait en un simple tirage aléatoire élargi, sans le brassage
+ * (croisement/mutation) qui fait la valeur ajoutée de l'algorithme génétique.
  */
-export function playDefensePhase(input: DefensePlayerInput): readonly TowerInstance[] | undefined {
+export async function playDefensePhase(
+  input: DefensePlayerInput,
+): Promise<readonly TowerInstance[] | undefined> {
   return evolveDefense(
     input.map,
     input.wave,
@@ -331,7 +420,8 @@ export function playDefensePhase(input: DefensePlayerInput): readonly TowerInsta
     input.chateauMaxHp,
     input.monsterCatalog,
     input.towerCatalog,
-    500,
+    OFFICIAL_POPULATION_SIZE,
     input.maxTime,
+    input.onBestFound,
   );
 }

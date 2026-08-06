@@ -41,11 +41,21 @@ export class BoardAiSolution {
       : 'Debug : générer une vague IA (remplace les voies actuelles)',
   );
 
+  /**
+   * `addRandomDefense`/`addRandomLane` sont désormais asynchrones (la recherche IA met la carte à
+   * jour en direct à chaque génération, voir `onBestFound`) : `isThinking` sert ici à la fois à
+   * désactiver le bouton pendant le calcul (`disabled`) et à empêcher un second clic de démarrer
+   * une recherche concurrente sur le même état.
+   */
   protected onClick(): void {
-    if (this.phase() === 'defense') {
-      this.defenseService.addRandomDefense();
+    if (this.matchService.isThinking()) {
       return;
     }
-    this.lanesService.addRandomLane();
+    this.matchService.setThinking(true);
+    const run =
+      this.phase() === 'defense'
+        ? this.defenseService.addRandomDefense()
+        : this.lanesService.addRandomLane();
+    void run.finally(() => this.matchService.setThinking(false));
   }
 }

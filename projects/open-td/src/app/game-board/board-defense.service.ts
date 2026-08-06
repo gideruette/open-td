@@ -1,8 +1,10 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { canOccupyCell, canPlaceTower, evolveDefense, phaseScore, playDefensePhase } from 'engine';
+import type { ProgressInfo } from 'engine';
 import type { GridCoord, TowerInstance } from 'shared';
 import { TOWER_TYPES, findTowerType } from 'shared';
 import { BoardEngineService } from './board-engine.service';
+import { BoardMatchService } from './board-match.service';
 import { BoardMessageService } from './board-message.service';
 import { BoardTrialService } from './board-trial.service';
 
@@ -27,6 +29,7 @@ const FAILURE_MESSAGES: Record<string, string> = {
 @Injectable()
 export class BoardDefenseService {
   private readonly gameState = inject(BoardEngineService);
+  private readonly matchService = inject(BoardMatchService);
   private readonly messages = inject(BoardMessageService);
   private readonly trial = inject(BoardTrialService);
 
@@ -165,7 +168,7 @@ export class BoardDefenseService {
    * l'algorithme génétique (`evolveDefense` dans `engine`) — sert à tester l'IA sans poser à la
    * main.
    */
-  addRandomDefense(): void {
+  async addRandomDefense(): Promise<void> {
     if (this.gameState.phase() !== 'defense' || this.trial.isRunning()) {
       return;
     }
@@ -175,11 +178,16 @@ export class BoardDefenseService {
       return;
     }
 
-    const towers = evolveDefense(
+    const towers = await evolveDefense(
       map,
       wave,
       this.gameState.engine.getDefenseBudget(),
       this.gameState.chateauMaxHp(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (best, info) => this.applyTowers(best, info),
     );
     this.applyTowers(towers);
   }
@@ -187,9 +195,10 @@ export class BoardDefenseService {
   /**
    * Fait jouer l'ordinateur la phase Défense à la place du joueur (case IA du système de slots) :
    * remplace les tours posées par celles trouvées par `playDefensePhase` (point d'entrée IA
-   * officiel), avec `maxTime` ms de recherche.
+   * officiel), avec `maxTime` ms de recherche. Pendant la recherche, la carte affiche déjà la
+   * meilleure défense trouvée jusqu'ici (`onBestFound`) plutôt que d'attendre le résultat final.
    */
-  playAiDefenseTurn(maxTime: number): void {
+  async playAiDefenseTurn(maxTime: number): Promise<void> {
     const map = this.gameState.map();
     const wave = this.gameState.vagueCourante();
     if (!map || !wave) {
@@ -197,18 +206,26 @@ export class BoardDefenseService {
     }
 
     const towers =
-      playDefensePhase({
+      (await playDefensePhase({
         map,
         wave,
         defenseBudget: this.gameState.engine.getDefenseBudget(),
         chateauMaxHp: this.gameState.chateauMaxHp(),
         maxTime,
-      }) ?? [];
+        onBestFound: (best, info) => this.applyTowers(best, info),
+      })) ?? [];
     this.applyTowers(towers);
   }
 
-  /** Remplace les tours posées par `towers` (efface les anciennes, pose les nouvelles). */
-  private applyTowers(towers: readonly TowerInstance[]): void {
+  /**
+   * Remplace les tours posées par `towers` (efface les anciennes, pose les nouvelles). Publie
+   * aussi `info` (nombre d'individus notés, score du meilleur), quand fourni par `onBestFound` en
+   * cours de recherche IA, via `BoardMatchService` — pour le HUD debug.
+   */
+  private applyTowers(towers: readonly TowerInstance[], info?: ProgressInfo): void {
+    if (info) {
+      this.matchService.reportAiProgress(info);
+    }
     for (const tower of this.gameState.towers()) {
       this.gameState.engine.deleteTower(tower.id);
     }

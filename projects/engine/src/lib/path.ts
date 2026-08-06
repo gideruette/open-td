@@ -183,6 +183,33 @@ function cellKey(coord: GridCoord): string {
 }
 
 /**
+ * Simplifie une liste ordonnée de cases en supprimant les boucles : dès qu'une case déjà
+ * traversée réapparaît plus loin, les cases intermédiaires (la boucle) sont retirées et le tracé
+ * reprend depuis cette case — un chemin ne doit jamais repasser deux fois par le même point, que
+ * ce soit tracé à la main (`handleTracingClick`) ou généré au hasard (IA d'attaque).
+ */
+export function simplifyPathCells(cells: readonly GridCoord[]): GridCoord[] {
+  const result: GridCoord[] = [];
+  const indexOfCell = new Map<string, number>();
+  for (const cell of cells) {
+    const key = cellKey(cell);
+    const loopStart = indexOfCell.get(key);
+    if (loopStart !== undefined) {
+      result.length = loopStart + 1;
+      for (const [otherKey, index] of indexOfCell) {
+        if (index > loopStart) {
+          indexOfCell.delete(otherKey);
+        }
+      }
+      continue;
+    }
+    indexOfCell.set(key, result.length);
+    result.push(cell);
+  }
+  return result;
+}
+
+/**
  * Plus court chemin (BFS, cases hex de coût uniforme) entre deux cases de la grille, en évitant
  * les cases occupées par une tour et les rivières. Cases traversées, `from` exclue et `to` incluse
  * (même convention que `hexLinedraw`) ; `undefined` si `to` est inatteignable (encerclée de tours).

@@ -10,13 +10,14 @@ import type {
 } from 'shared';
 import { MONSTER_TYPES, hexDistance } from 'shared';
 import { findTowerAt, isBorderCell, isChateauCell } from './fortress';
-import { shuffled } from './ia-player';
+import { type ProgressInfo, type ProgressReporter, createProgressReporter, shuffled } from './ia-player';
 import {
   PATH_CELL_COST,
   expandPathCells,
   hasUniqueCell,
   pathCellsCost,
   routeThroughWaypoints,
+  simplifyPathCells,
 } from './path';
 import { phaseScore, waveCost } from './combat';
 
@@ -34,6 +35,8 @@ export interface AttackPlayerInput {
   towerCatalog?: readonly TowerType[];
   /** Budget de temps (ms) alloué à la recherche génétique — voir `evolveAttackWave`. */
   maxTime?: number;
+  /** Rappelé au fil de la recherche avec la meilleure vague trouvée jusqu'ici — voir `evolveAttackWave`. */
+  onBestFound?: (best: Wave, info: ProgressInfo) => void;
 }
 
 /** Toutes les cases de bord de la carte, hors château : positions valides pour un nouveau spawn. */
@@ -121,9 +124,10 @@ export function initRandomRoute(
     if (!cells) {
       continue;
     }
+    const routeCells = simplifyPathCells([spawn, ...cells]);
     const path: MapPath = {
       id: `ia-route-${Math.floor(Math.random() * 1e9)}`,
-      nodes: [[spawn.x, spawn.y], ...cells.map((cell): [number, number] => [cell.x, cell.y])],
+      nodes: routeCells.map((cell): [number, number] => [cell.x, cell.y]),
     };
     if (existingPaths.length === 0 || hasUniqueCell(expandPathCells(path), existingPaths)) {
       return path;
@@ -231,9 +235,10 @@ function blendRoutes(
   if (!cells) {
     return undefined;
   }
+  const routeCells = simplifyPathCells([spawn, ...cells]);
   return {
     id: `ia-blend-${Math.floor(Math.random() * 1e9)}`,
-    nodes: [[spawn.x, spawn.y], ...cells.map((cell): [number, number] => [cell.x, cell.y])],
+    nodes: routeCells.map((cell): [number, number] => [cell.x, cell.y]),
   };
 }
 
@@ -297,23 +302,53 @@ function scoreAttackWave(
   return phaseScore(towers, wave, chateauMaxHp, chateau, monsterCatalog, undefined, 'attack');
 }
 
-/** Trie `waves` par score croissant (mode 'attack') et n'en garde que les `count` meilleures. */
-function fittestWaves(
+/** Meilleure vague trouvée jusqu'ici (au sens de `scoreAttackWave`, score croissant) et son score. */
+interface BestWave {
+  wave: Wave;
+  score: number;
+}
+
+/**
+ * Trie `waves` par score croissant (mode 'attack') et n'en garde que les `count` meilleures.
+ * L'essentiel du temps de calcul d'`evolveAttackWave` se passe ici (jusqu'à `2 * populationSize`
+ * vagues à noter pour la seule population initiale, chacune une simulation de combat complète via
+ * `phaseScore`) plutôt qu'entre deux générations : `reporter` est donc rappelé à la volée, vague
+ * par vague, plutôt qu'une seule fois en fin de tri — sans quoi l'IU resterait informée en fait
+ * uniquement à la fin d'une notation qui peut consommer tout le budget de temps à elle seule
+ * (`maxTime`, non appliqué ici — voir `evolveAttackWave`). `seed`, la meilleure vague déjà connue
+ * avant cet appel (typiquement celle publiée par l'appel précédent), sert de point de départ à la
+ * comparaison : sans lui, le meilleur affiché retomberait au niveau du premier élément parcouru de
+ * `waves` en tout début de tri, avant de remonter au fil du parcours — une régression visible sur
+ * la carte pour rien, puisque le meilleur individu de la génération précédente réapparaît toujours
+ * dans `waves` (repris tel quel dans la population), juste pas nécessairement en tête de liste.
+ */
+async function fittestWaves(
   waves: readonly Wave[],
   count: number,
   towers: readonly TowerInstance[],
   chateauMaxHp: number,
   chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
-): Wave[] {
-  return waves
-    .map((wave) => ({
-      wave,
-      score: scoreAttackWave(wave, towers, chateauMaxHp, chateau, monsterCatalog),
-    }))
+  iterations: { count: number },
+  reporter: ProgressReporter<Wave>,
+  seed: BestWave | undefined,
+): Promise<{ population: Wave[]; best: BestWave | undefined }> {
+  const scored: BestWave[] = [];
+  let best = seed;
+  for (const wave of waves) {
+    const score = scoreAttackWave(wave, towers, chateauMaxHp, chateau, monsterCatalog);
+    scored.push({ wave, score });
+    iterations.count++;
+    if (!best || score < best.score) {
+      best = { wave, score };
+    }
+    await reporter.report(best.wave, { iterations: iterations.count, score: best.score });
+  }
+  const population = scored
     .sort((a, b) => a.score - b.score)
     .slice(0, count)
     .map((entry) => entry.wave);
+  return { population, best };
 }
 
 const DEFAULT_POPULATION_SIZE = 20;
@@ -348,12 +383,10 @@ function removeRandomWaypoint(
   if (!rerouted) {
     return undefined;
   }
+  const routeCells = simplifyPathCells([cells[0], ...rerouted]);
   return {
     ...path,
-    nodes: [
-      [cells[0].x, cells[0].y],
-      ...rerouted.map((cell): [number, number] => [cell.x, cell.y]),
-    ],
+    nodes: routeCells.map((cell): [number, number] => [cell.x, cell.y]),
   };
 }
 
@@ -496,9 +529,15 @@ export function enforceBudget(
  * (`crossWaves`), on mute de temps en temps les vagues filles obtenues (`mutateWave`) pour
  * préserver la diversité génétique, puis on ne garde que les `populationSize` meilleures parmi
  * population + filles réunies. Boucle jusqu'à épuisement de `maxTime` ms, puis retourne la
- * meilleure vague trouvée.
+ * meilleure vague trouvée. `onBestFound`, s'il est fourni, est rappelé au fil de la notation de
+ * chaque lot d'individus (`fittestWaves`, throttlé à ~60 fps par `createProgressReporter`) avec la
+ * meilleure vague trouvée jusqu'ici et le nombre d'individus notés — permet à l'UI d'afficher la
+ * progression de la recherche pendant que l'IA « réfléchit » plutôt que d'attendre le résultat
+ * final. La notation de la population initiale (jusqu'à `2 * populationSize` vagues) domine
+ * généralement le temps de calcul total, largement avant la première génération — c'est pourquoi
+ * `onBestFound` y est déjà rappelé, pas seulement entre deux générations.
  */
-export function evolveAttackWave(
+export async function evolveAttackWave(
   map: GameMap,
   towers: readonly TowerInstance[],
   attackBudget: number,
@@ -507,8 +546,12 @@ export function evolveAttackWave(
   maxLanes: number = 3,
   populationSize: number = DEFAULT_POPULATION_SIZE,
   maxTime: number = 100,
-): Wave {
+  onBestFound?: (best: Wave, info: ProgressInfo) => void,
+): Promise<Wave> {
   const start = Date.now();
+  const iterations = { count: 0 };
+  const reporter: ProgressReporter<Wave> = createProgressReporter(onBestFound);
+  let best: BestWave | undefined;
 
   const effectiveMaxLanes = Math.min(
     maxLanes,
@@ -520,14 +563,19 @@ export function evolveAttackWave(
       initRandomWave(map, towers, attackBudget, monsterCatalog, effectiveMaxLanes),
     );
   }
-  let population = fittestWaves(
+  const initialResult = await fittestWaves(
     initialCandidates,
     populationSize,
     towers,
     chateauMaxHp,
     map.chateau,
     monsterCatalog,
+    iterations,
+    reporter,
+    best,
   );
+  let population = initialResult.population;
+  best = initialResult.best;
 
   while (population.length > 0 && Date.now() - start < maxTime) {
     const children = Array.from({ length: population.length }, () => {
@@ -536,25 +584,40 @@ export function evolveAttackWave(
       const mutated = mutateWave(child, map, towers, attackBudget, monsterCatalog);
       return enforceBudget(mutated, attackBudget, monsterCatalog);
     });
-    population = fittestWaves(
+    const result = await fittestWaves(
       [...population, ...children],
       populationSize,
       towers,
       chateauMaxHp,
       map.chateau,
       monsterCatalog,
+      iterations,
+      reporter,
+      best,
     );
+    population = result.population;
+    best = result.best;
   }
 
   return population[0] ?? { lanes: [] };
 }
 
+/** Nombre d'individus conservés par génération pour `playAttackPhase` — voir sa note. */
+const OFFICIAL_POPULATION_SIZE = 50;
+
 /**
  * Fait jouer l'ordinateur la phase Attaque : compose une vague qui détruit la forteresse figée,
  * via l'algorithme génétique `evolveAttackWave` (population de vagues candidates, notées avec
  * `phaseScore` en mode 'attack', puis sélection/croisement au fil des générations).
+ *
+ * `OFFICIAL_POPULATION_SIZE` (jusqu'à `2 * populationSize` vagues à noter pour la seule population
+ * initiale, chacune une simulation de combat complète) est volontairement modeste : une population
+ * de 500 laissait la notation de la population initiale consommer `maxTime` à elle seule (mesuré
+ * jusqu'à 7 s pour un budget de 2 s), sans qu'aucune génération n'ait le temps de tourner — la
+ * recherche dégénérait en un simple tirage aléatoire élargi, sans le brassage (croisement/mutation)
+ * qui fait la valeur ajoutée de l'algorithme génétique.
  */
-export function playAttackPhase(input: AttackPlayerInput): Wave | undefined {
+export async function playAttackPhase(input: AttackPlayerInput): Promise<Wave | undefined> {
   return evolveAttackWave(
     input.map,
     input.towers,
@@ -562,7 +625,8 @@ export function playAttackPhase(input: AttackPlayerInput): Wave | undefined {
     input.chateauMaxHp,
     input.monsterCatalog,
     5,
-    500,
+    OFFICIAL_POPULATION_SIZE,
     input.maxTime,
+    input.onBestFound,
   );
 }

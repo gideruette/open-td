@@ -120,14 +120,14 @@ describe('enforceDefenseBudget', () => {
 });
 
 describe('evolveDefense', () => {
-  it('trouve une défense qui transforme un échec (château nu) en réussite', () => {
+  it('trouve une défense qui transforme un échec (château nu) en réussite', async () => {
     // Un seul monstre, mais assez de dégâts pour dépasser les PV du château si rien ne l'arrête ;
     // une seule tour suffisante à le tuer avant qu'il n'atteigne le château doit donc être trouvée.
     const deadly: MonsterType = { ...gobelin, id: 'deadly', hp: 10, chateauDamage: 150 };
     const strongArcher: TowerType = { ...archer, range: 100, damage: 8, cooldown: 5 };
     const wave = waveOf(laneOf([{ type: 'deadly' }]));
 
-    const towers = evolveDefense(map, wave, 60, 100, [deadly], [strongArcher], 10, 300);
+    const towers = await evolveDefense(map, wave, 60, 100, [deadly], [strongArcher], 10, 300);
 
     const withoutTowers = new DefenseSimulation([], wave, 100, [deadly], [strongArcher]);
     expect(withoutTowers.runToCompletion()).toBe('failure');
@@ -159,11 +159,35 @@ describe('evolveDefense', () => {
     expect(scoreTwoTowers).toBeGreaterThan(scoreOneTower);
   });
 
-  it("ne dépasse jamais le budget de défense, même après croisement de plusieurs tours", () => {
+  it("ne dépasse jamais le budget de défense, même après croisement de plusieurs tours", async () => {
     const wave = waveOf(laneOf([{ type: 'gobelin' }, { type: 'gobelin' }, { type: 'gobelin' }]));
     const defenseBudget = 80;
-    const towers = evolveDefense(map, wave, defenseBudget, 100, [gobelin], [archer], 15, 300);
+    const towers = await evolveDefense(map, wave, defenseBudget, 100, [gobelin], [archer], 15, 300);
     const totalCost = towers.length * archer.cost;
     expect(totalCost).toBeLessThanOrEqual(defenseBudget);
+  });
+
+  it('rappelle onBestFound à la fin de chaque génération avec la meilleure défense trouvée jusqu\'ici', async () => {
+    const wave = waveOf(laneOf([{ type: 'gobelin' }, { type: 'gobelin' }, { type: 'gobelin' }]));
+    const seenScores: number[] = [];
+    const towers = await evolveDefense(
+      map,
+      wave,
+      80,
+      100,
+      [gobelin],
+      [archer],
+      15,
+      300,
+      (best) => {
+        seenScores.push(phaseScore(best, wave, 100, map.chateau, [gobelin], [archer], 'defense'));
+      },
+    );
+    expect(seenScores.length).toBeGreaterThan(0);
+    const finalScore = phaseScore(towers, wave, 100, map.chateau, [gobelin], [archer], 'defense');
+    // La sélection ne fait jamais reculer le meilleur score au fil des générations (`fittestDefenses`
+    // conserve toujours les meilleurs individus, parents compris) : le dernier score publié ne peut
+    // pas être meilleur que le résultat final.
+    expect(seenScores[seenScores.length - 1]).toBeLessThanOrEqual(finalScore);
   });
 });

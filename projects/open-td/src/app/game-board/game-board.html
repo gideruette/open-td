@@ -16,7 +16,16 @@
     @if (aiThinking()) {
       <div class="board__ai-loader" aria-live="polite">
         <span class="board__ai-spinner"></span>
-        L'IA réfléchit...
+        <span>L'IA réfléchit...</span>
+        @if (showAiDebug()) {
+          @let progress = aiProgress();
+          @if (progress) {
+            <span class="board__ai-debug">
+              {{ progress.iterations }} itération{{ progress.iterations > 1 ? 's' : '' }} — score
+              {{ progress.score | number: '1.0-2' }}
+            </span>
+          }
+        }
       </div>
     }
     <otd-board-message />

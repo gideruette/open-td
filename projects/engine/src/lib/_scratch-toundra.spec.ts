@@ -29,7 +29,7 @@ const BOOTSTRAP_WAVE: Wave = {
 
 describe('Scratch: budget minimal toundra-05 palier 1', () => {
   for (const budget of [140, 160, 180, 200, 220, 250, 280]) {
-    it(`budget ${budget}`, () => {
+    it(`budget ${budget}`, async () => {
       const startingData = findMapCatalogEntry('toundra-05')!.startingData;
       const engine = new GameEngine();
       engine.startRun(MAP, { ...startingData, startingDefenseBudget: budget });
@@ -39,13 +39,13 @@ describe('Scratch: budget minimal toundra-05 palier 1', () => {
       let bestHp = -1;
       for (let trial = 0; trial < 5; trial++) {
         const towers =
-          playDefensePhase({
+          (await playDefensePhase({
             map: MAP,
             wave,
             defenseBudget: engine.getDefenseBudget(),
             chateauMaxHp: engine.getChateauMaxHp(),
             maxTime: 800,
-          }) ?? [];
+          })) ?? [];
         const engine2 = new GameEngine();
         engine2.startRun(MAP, { ...startingData, startingDefenseBudget: budget });
         engine2.resolveAttackSuccess(BOOTSTRAP_WAVE);
