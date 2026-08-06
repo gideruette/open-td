@@ -358,47 +358,99 @@ function removeRandomWaypoint(
 }
 
 /**
+ * Ajoute une nouvelle voie à la vague : une route aléatoire (`initRandomRoute`, en évitant les
+ * chemins des voies existantes) garnie d'une file de monstres tirée sur tout le budget d'attaque
+ * — comme le ferait `initRandomWave` pour une voie initiale, laissant à `enforceBudget` (appelé
+ * juste après en sortie de `mutateWave`) le soin de ramener la vague dans son budget. Permet à la
+ * population de dépasser en cours d'évolution le plafond de voies imposé à la génération initiale
+ * (`maxLanes`/`affordableLaneCap`) — le brassage des routes n'est pas tenu par ce plafond. Inchangée
+ * si aucune route candidate n'est disponible (carte saturée, ou toutes les routes restantes font
+ * doublon avec les voies existantes).
+ */
+function addRandomLane(
+  wave: Wave,
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  attackBudget: number,
+  monsterCatalog: readonly MonsterType[],
+): Wave {
+  const existingPaths = wave.lanes.map((lane) => lane.path);
+  const newRoute = initRandomRoute(map, towers, existingPaths);
+  if (!newRoute) {
+    return wave;
+  }
+  const [newLane] = initRandomQueues([newRoute], attackBudget, monsterCatalog);
+  return { lanes: [...wave.lanes, newLane] };
+}
+
+/**
+ * Retire une voie tirée au hasard de la vague, avec son chemin et sa file de monstres — pendant du
+ * retrait d'un simple point de tracé (`removeRandomWaypoint`), à l'échelle de la voie entière plutôt
+ * que d'un seul jalon. Permet au brassage des routes de redescendre sous le plafond de voies de la
+ * génération initiale, voire jusqu'à une vague sans aucune voie (état déjà atteignable via
+ * `initRandomWave`/`enforceBudget` quand plus aucune voie ne peut financer le moindre monstre).
+ */
+function removeRandomLane(wave: Wave): Wave {
+  const laneIndex = Math.floor(Math.random() * wave.lanes.length);
+  return { lanes: wave.lanes.filter((_, i) => i !== laneIndex) };
+}
+
+/**
  * Mute une vague fille pour réintroduire de la diversité que le seul croisement ne peut pas
  * produire (il ne fait que recombiner les chemins/files déjà présents dans la population) : avec
- * probabilité `MUTATION_RATE`, altère au hasard une voie tirée au hasard, d'une seule de ces trois
- * façons — jamais plusieurs à la fois : re-tracé complet (nouvelle route aléatoire avec détours,
- * `initRandomRoute`, en évitant les chemins des autres voies), retrait d'un point du chemin
- * (`removeRandomWaypoint`, variation plus locale), ou régénération de la file de monstres pour le
- * même budget qu'elle consommait (`initRandomQueues`). Inchangée si la vague n'a aucune voie, ou si
- * la mutation de chemin choisie échoue (route résultante invalide).
+ * probabilité `MUTATION_RATE`, altère au hasard la vague d'une seule de ces cinq façons — jamais
+ * plusieurs à la fois : re-tracé complet d'une voie tirée au hasard (nouvelle route aléatoire avec
+ * détours, `initRandomRoute`, en évitant les chemins des autres voies), retrait d'un point du
+ * chemin d'une voie tirée au hasard (`removeRandomWaypoint`, variation plus locale), régénération
+ * de la file de monstres d'une voie tirée au hasard pour le même budget qu'elle consommait
+ * (`initRandomQueues`), ajout d'une voie entièrement nouvelle (`addRandomLane`) ou retrait d'une
+ * voie existante tirée au hasard (`removeRandomLane`) — ces deux dernières sont les seules à faire
+ * varier le nombre de voies au-delà du plafond `maxLanes` de la population initiale (CONCEPTION.md
+ * §5.3 : composer/décomposer une vague en voies reste gratuit, seules les cases de chemin et les
+ * monstres sont facturés). Inchangée si la vague n'a aucune voie (rien à muter, y compris pour
+ * l'ajout — géré séparément), ou si la mutation de chemin choisie échoue (route résultante
+ * invalide).
  */
 function mutateWave(
   wave: Wave,
   map: GameMap,
   towers: readonly TowerInstance[],
+  attackBudget: number,
   monsterCatalog: readonly MonsterType[],
 ): Wave {
-  if (wave.lanes.length === 0 || Math.random() > MUTATION_RATE) {
+  if (Math.random() > MUTATION_RATE) {
     return wave;
+  }
+  if (wave.lanes.length === 0) {
+    return addRandomLane(wave, map, towers, attackBudget, monsterCatalog);
   }
 
   const laneIndex = Math.floor(Math.random() * wave.lanes.length);
   const lanes = [...wave.lanes];
   const roll = Math.random();
 
-  if (roll < 1 / 3) {
+  if (roll < 1 / 5) {
     const otherPaths = lanes.filter((_, i) => i !== laneIndex).map((lane) => lane.path);
     const mutatedRoute = initRandomRoute(map, towers, otherPaths);
     if (mutatedRoute) {
       lanes[laneIndex] = { ...lanes[laneIndex], path: mutatedRoute };
     }
-  } else if (roll < 2 / 3) {
+  } else if (roll < 2 / 5) {
     const mutatedRoute = removeRandomWaypoint(map, towers, lanes[laneIndex].path);
     if (mutatedRoute) {
       lanes[laneIndex] = { ...lanes[laneIndex], path: mutatedRoute };
     }
-  } else {
+  } else if (roll < 3 / 5) {
     const laneBudget = lanes[laneIndex].units.reduce((total, unit) => {
       const type = monsterCatalog.find((candidate) => candidate.id === unit.type);
       return total + (type?.cost ?? 0);
     }, 0);
     const [mutatedLane] = initRandomQueues([lanes[laneIndex].path], laneBudget, monsterCatalog);
     lanes[laneIndex] = mutatedLane;
+  } else if (roll < 4 / 5) {
+    return addRandomLane({ lanes }, map, towers, attackBudget, monsterCatalog);
+  } else {
+    return removeRandomLane({ lanes });
   }
 
   return { lanes };
@@ -436,11 +488,15 @@ export function enforceBudget(
  * imparti dégrade la qualité plutôt que de dépasser le budget de temps). `maxLanes` est en outre
  * plafonné à `affordableLaneCap` : demander plus de voies que ce que `attackBudget` peut
  * réellement financer ne fait que gaspiller du temps de calcul sur des voies qui seront filtrées
- * en fin de course, faute de budget pour le moindre monstre. À chaque génération, on croise des
- * paires de parents tirées au hasard dans la population (`crossWaves`), on mute de temps en temps
- * les vagues filles obtenues (`mutateWave`) pour préserver la diversité génétique, puis on ne
- * garde que les `populationSize` meilleures parmi population + filles réunies. Boucle jusqu'à
- * épuisement de `maxTime` ms, puis retourne la meilleure vague trouvée.
+ * en fin de course, faute de budget pour le moindre monstre. Ce plafond ne borne que la population
+ * initiale : le brassage des générations suivantes (`mutateWave`, ajout/retrait de voie) peut aussi
+ * bien redescendre en dessous que remonter au-dessus, la sélection naturelle (`fittestWaves`) et
+ * `enforceBudget` se chargeant d'éliminer les dérives qui ne paient pas leur coût de chemin. À
+ * chaque génération, on croise des paires de parents tirées au hasard dans la population
+ * (`crossWaves`), on mute de temps en temps les vagues filles obtenues (`mutateWave`) pour
+ * préserver la diversité génétique, puis on ne garde que les `populationSize` meilleures parmi
+ * population + filles réunies. Boucle jusqu'à épuisement de `maxTime` ms, puis retourne la
+ * meilleure vague trouvée.
  */
 export function evolveAttackWave(
   map: GameMap,
@@ -477,7 +533,7 @@ export function evolveAttackWave(
     const children = Array.from({ length: population.length }, () => {
       const [parentA, parentB] = shuffled(population);
       const child = crossWaves(map, towers, parentA, parentB ?? parentA);
-      const mutated = mutateWave(child, map, towers, monsterCatalog);
+      const mutated = mutateWave(child, map, towers, attackBudget, monsterCatalog);
       return enforceBudget(mutated, attackBudget, monsterCatalog);
     });
     population = fittestWaves(
@@ -505,7 +561,7 @@ export function playAttackPhase(input: AttackPlayerInput): Wave | undefined {
     input.attackBudget,
     input.chateauMaxHp,
     input.monsterCatalog,
-    100,
+    5,
     500,
     input.maxTime,
   );
