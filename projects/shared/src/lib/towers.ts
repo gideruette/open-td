@@ -9,7 +9,7 @@ export const TOWER_TYPES: readonly TowerType[] = [
     id: 'archer',
     name: 'Archer',
     description: 'Tour polyvalente à cadence de tir élevée et bonne portée.',
-    cost: 20,
+    cost: 24,
     range: 3,
     damage: 8,
     cooldown: 5,
