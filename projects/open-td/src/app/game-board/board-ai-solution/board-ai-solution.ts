@@ -8,8 +8,8 @@ import { BoardTrialService } from '../board-trial.service';
 /**
  * Bouton debug (visible en dev uniquement, `isDevMode()` — désactivé par la CLI en `ng build`
  * production) affiché à côté du triangle de lancement : remplace la voie/défense en cours par la
- * meilleure solution trouvée par l'IA génétique (`evolveAttackWave`/`evolveDefense`), sans jouer à
- * la place du joueur.
+ * meilleure solution trouvée par l'IA (`playAttackPhase`/`playDefensePhase`, même budget de temps
+ * qu'un tour IA), sans jouer à la place du joueur.
  */
 @Component({
   selector: 'otd-board-ai-solution',

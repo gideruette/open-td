@@ -1,6 +1,5 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import {
-  evolveAttackWave,
   cellsBetween,
   hasUniqueCell,
   isBorderCell,
@@ -14,10 +13,10 @@ import {
 } from 'engine';
 import type { ProgressInfo } from 'engine';
 import { findMonsterType } from 'shared';
-import type { GameMap, GridCoord, MapPath, MapSpawn, Wave } from 'shared';
+import type { GridCoord, MapPath, MapSpawn, Wave } from 'shared';
 import { BoardBudgetService } from './board-budget.service';
 import { BoardEngineService } from './board-engine.service';
-import { BoardMatchService } from './board-match.service';
+import { AI_THINK_TIME_MS, BoardMatchService } from './board-match.service';
 import { BoardMessageService } from './board-message.service';
 import { BoardTrialService } from './board-trial.service';
 import type { BoardTool, LaneDraft } from './board-types';
@@ -412,33 +411,14 @@ export class BoardLanesService {
 
   /**
    * Debug : vide les voies en cours de composition et les remplace par la meilleure vague trouvée
-   * par l'IA Attaque via l'algorithme génétique (`evolveAttackWave` dans `engine`) — sert à
-   * tester l'IA sans composer à la main.
+   * par l'IA Attaque via le même point d'entrée que le tour IA (`playAttackPhase`, budget de temps
+   * `AI_THINK_TIME_MS`) — sert à tester l'IA sans composer à la main.
    */
   async addRandomLane(): Promise<void> {
     if (this.gameState.phase() !== 'attack' || this.trial.isRunning() || this.isDrawingPath()) {
       return;
     }
-    this.clearLanes();
-
-    const map = this.gameState.map();
-    if (!map) {
-      this.refreshAttackBudget();
-      return;
-    }
-
-    const wave = await evolveAttackWave(
-      map,
-      this.gameState.towers(),
-      this.gameState.engine.getAttackBudget(),
-      this.gameState.chateauMaxHp(),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (best, info) => this.showBestSoFar(map, best, info),
-    );
-    this.materializeWave(map, wave);
+    await this.playAiAttackTurn(AI_THINK_TIME_MS);
   }
 
   /**
@@ -463,25 +443,34 @@ export class BoardLanesService {
       attackBudget: this.gameState.engine.getAttackBudget(),
       chateauMaxHp: this.gameState.chateauMaxHp(),
       maxTime,
-      onBestFound: (best, info) => this.showBestSoFar(map, best, info),
+      onBestFound: (best, info) => this.showBestSoFar(best, info),
     })) ?? { lanes: [] };
-    this.materializeWave(map, wave);
+    this.applyWave(wave);
   }
 
   /**
    * Affiche sur la carte la meilleure vague trouvée jusqu'ici en cours de recherche IA (rappelé
    * au fil de la recherche, voir `onBestFound`) : vide les voies affichées et les remplace par
-   * `wave`, comme le ferait le résultat final (`materializeWave`), mais purge aussi les spawns
+   * `wave`, comme le ferait le résultat final (`applyWave`), mais purge aussi les spawns
    * orphelins qu'un individu précédent aurait pu créer sans route pour les tenir (chaque nouveau
    * meilleur individu n'emprunte pas forcément le même spawn que le précédent). Publie aussi
    * `info` (nombre d'individus notés, score du meilleur) via `BoardMatchService`, pour le HUD
    * debug.
    */
-  private showBestSoFar(map: GameMap, wave: Wave, info: ProgressInfo): void {
+  private showBestSoFar(wave: Wave, info: ProgressInfo): void {
     this.matchService.reportAiProgress(info);
+    this.applyWave(wave);
+  }
+
+  /**
+   * Remplace les voies affichées par `wave` : retire d'abord les voies en cours (et les spawns
+   * orphelins), puis matérialise — évite de doubler les chemins quand `onBestFound` a déjà posé
+   * la même vague avant le résultat final de `playAttackPhase`.
+   */
+  private applyWave(wave: Wave): void {
     this.clearLanes();
     this.gameState.engine.pruneOrphanSpawns();
-    this.materializeWave(map, wave);
+    this.materializeWave(wave);
   }
 
   /** Vide les voies en cours de composition (chemins retirés de la carte, budget non recalculé). */
@@ -494,18 +483,33 @@ export class BoardLanesService {
     this.gameState.refresh();
   }
 
-  /** Ajoute les voies de `wave` à la carte (spawns manquants, chemins) et les charge en composition. */
-  private materializeWave(map: GameMap, wave: Wave): void {
+  /**
+   * Ajoute les voies de `wave` à la carte (spawns manquants, chemins) et les charge en composition.
+   * Consulte la carte live du moteur à chaque voie : un snapshot figé ne verrait pas les spawns
+   * ajoutés par les voies précédentes de la même vague (doublons au même bord). N'ajoute un
+   * chemin que s'il n'y est pas déjà (même garde-fou que `persistWaveRoutes` côté moteur).
+   */
+  private materializeWave(wave: Wave): void {
     for (const lane of wave.lanes) {
-      const [spawnX, spawnY] = lane.path.nodes[0];
-      if (!isSpawnCell(map, { x: spawnX, y: spawnY })) {
+      const start = lane.path.nodes[0];
+      if (!start) {
+        continue;
+      }
+      const spawn = { x: start[0], y: start[1] };
+      const liveMap = this.gameState.map();
+      if (!liveMap) {
+        continue;
+      }
+      if (!isSpawnCell(liveMap, spawn)) {
         this.gameState.engine.addSpawn({
           id: `spawn-${this.customSpawnSequence++}`,
-          x: spawnX,
-          y: spawnY,
+          ...spawn,
         });
       }
-      this.gameState.engine.addPath(lane.path);
+      const mapAfterSpawn = this.gameState.map();
+      if (mapAfterSpawn && !mapAfterSpawn.paths.some((path) => path.id === lane.path.id)) {
+        this.gameState.engine.addPath(lane.path);
+      }
     }
     this.lanesState.set(
       wave.lanes.map((lane) => ({

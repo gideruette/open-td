@@ -1,10 +1,10 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { canOccupyCell, canPlaceTower, evolveDefense, phaseScore, playDefensePhase } from 'engine';
+import { canOccupyCell, canPlaceTower, phaseScore, playDefensePhase } from 'engine';
 import type { ProgressInfo } from 'engine';
 import type { GridCoord, TowerInstance } from 'shared';
 import { TOWER_TYPES, findTowerType } from 'shared';
 import { BoardEngineService } from './board-engine.service';
-import { BoardMatchService } from './board-match.service';
+import { AI_THINK_TIME_MS, BoardMatchService } from './board-match.service';
 import { BoardMessageService } from './board-message.service';
 import { BoardTrialService } from './board-trial.service';
 
@@ -164,32 +164,15 @@ export class BoardDefenseService {
   }
 
   /**
-   * Debug : remplace les tours posées par la meilleure défense trouvée par l'IA Défense via
-   * l'algorithme génétique (`evolveDefense` dans `engine`) — sert à tester l'IA sans poser à la
-   * main.
+   * Debug : remplace les tours posées par la meilleure défense trouvée par l'IA Défense via le
+   * même point d'entrée que le tour IA (`playDefensePhase`, budget de temps `AI_THINK_TIME_MS`) —
+   * sert à tester l'IA sans poser à la main.
    */
   async addRandomDefense(): Promise<void> {
     if (this.gameState.phase() !== 'defense' || this.trial.isRunning()) {
       return;
     }
-    const map = this.gameState.map();
-    const wave = this.gameState.vagueCourante();
-    if (!map || !wave) {
-      return;
-    }
-
-    const towers = await evolveDefense(
-      map,
-      wave,
-      this.gameState.engine.getDefenseBudget(),
-      this.gameState.chateauMaxHp(),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (best, info) => this.applyTowers(best, info),
-    );
-    this.applyTowers(towers);
+    await this.playAiDefenseTurn(AI_THINK_TIME_MS);
   }
 
   /**
