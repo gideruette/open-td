@@ -448,6 +448,13 @@ export class GameBoard implements OnInit {
       !this.isDrawingPath() && lanes.length > 0 && lanes.every((lane) => lane.units.length > 0)
     );
   });
+  /** Tour cliquée en phase Attaque, dont la portée est affichée sur la carte (`undefined` = aucune). */
+  protected readonly selectedAttackTowerId = signal<string | undefined>(undefined);
+  protected readonly selectedAttackTower = computed(() => {
+    const id = this.selectedAttackTowerId();
+    return id ? this.towers().find((tower) => tower.id === id) : undefined;
+  });
+
   /** Repli affiché au-dessus de la carte tant qu'aucune voie n'est composée en phase Attaque (à vous de jouer). */
   protected readonly attackNoRouteHint = computed(() => {
     if (this.phase() !== 'attack' || this.lanes().length > 0 || this.isDrawingPath()) {
@@ -505,6 +512,7 @@ export class GameBoard implements OnInit {
       this.lanes();
       this.activeLaneIndex();
       this.drawingPath();
+      this.selectedAttackTowerId();
       this.trialMonsters();
       this.trialChateauHp();
       this.chateauMaxHp();
@@ -722,6 +730,7 @@ export class GameBoard implements OnInit {
     const wave = this.lanesService.toWave(activeLanes);
     this.pendingAttackWave = wave;
     this.lanesService.setPanTool();
+    this.selectedAttackTowerId.set(undefined);
     this.messages.set(undefined);
     this.activeTrial = this.gameState.engine.startAttackTrial(wave);
     this.trialService.setChateauHp(this.activeTrial.getChateauHp());
@@ -742,9 +751,11 @@ export class GameBoard implements OnInit {
     }
     const coord = this.toGridCoord(event);
     if (!coord) {
-      // En dehors de la grille : annule la case choisie en phase Défense.
+      // En dehors de la grille : annule la case choisie en phase Défense, ou la tour sélectionnée en Attaque.
       if (this.phase() === 'defense' && this.isPickingTower()) {
         this.defenseService.clearSelection();
+      } else if (this.phase() === 'attack') {
+        this.selectedAttackTowerId.set(undefined);
       }
       return;
     }
@@ -757,6 +768,16 @@ export class GameBoard implements OnInit {
         this.lanesService.handleTracingClick(coord);
         return;
       }
+      // Tour cliquée : affiche (ou masque, si déjà sélectionnée) sa portée sur la carte.
+      const tappedTower = this.towers().find(
+        (tower) => tower.position.x === coord.x && tower.position.y === coord.y,
+      );
+      if (tappedTower) {
+        this.selectedAttackTowerId.update((id) => (id === tappedTower.id ? undefined : tappedTower.id));
+        return;
+      }
+      // Clic ailleurs que sur la tour sélectionnée : efface sa portée affichée.
+      this.selectedAttackTowerId.set(undefined);
       const laneIndex = this.lanes().findIndex((lane) =>
         this.lanesService.pathContainsCell(lane.path, coord),
       );
@@ -1441,6 +1462,24 @@ export class GameBoard implements OnInit {
     });
   }
 
+  /** Cases de la grille (hors bord) situées à `range` de `center`, même métrique que le ciblage moteur. */
+  private gridCellsInRange(map: GameMap, center: GridCoord, range: number): GridCoord[] {
+    const centerWorld = hexToWorld(center);
+    const cells: GridCoord[] = [];
+    for (let y = 0; y < map.grid.rows; y++) {
+      for (let x = 0; x < map.grid.cols; x++) {
+        if (isBorderCell(map, { x, y })) {
+          continue;
+        }
+        const cellWorld = hexToWorld({ x, y });
+        if (Math.hypot(cellWorld.x - centerWorld.x, cellWorld.y - centerWorld.y) <= range) {
+          cells.push({ x, y });
+        }
+      }
+    }
+    return cells;
+  }
+
   /**
    * Adapte la taille CSS du canvas pour qu’il tienne entièrement dans le viewport
    * (contain), sans provoquer de scroll de page.
@@ -1541,6 +1580,18 @@ export class GameBoard implements OnInit {
         ctx.beginPath();
         ctx.arc(speckle.x, speckle.y, speckle.radius, 0, Math.PI * 2);
         ctx.fill();
+      }
+    }
+
+    // Portée de la tour cliquée en phase Attaque : teinte les cases qu'elle couvre.
+    if (isAttackPhase) {
+      const selectedTower = this.selectedAttackTower();
+      const selectedType = selectedTower ? findTowerType(selectedTower.typeId) : undefined;
+      if (selectedTower && selectedType) {
+        ctx.fillStyle = 'rgba(224, 64, 64, 0.22)';
+        for (const cell of this.gridCellsInRange(map, selectedTower.position, selectedType.range)) {
+          this.fillHex(ctx, cell);
+        }
       }
     }
 
