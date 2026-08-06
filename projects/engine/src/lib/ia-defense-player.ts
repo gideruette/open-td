@@ -195,17 +195,19 @@ export function enforceDefenseBudget(
  * Note une forteresse avec `phaseScore` en mode 'defense' : entre deux défenses qui échouent (le
  * château a encaissé au moins un point de dégât), la vie du château la plus haute — la plus
  * proche de rester intacte — est la meilleure ; entre deux défenses qui tiennent la vague sans
- * aucun dégât, la plus étalée (le plus de cases prises par des tours) l'emporte — plus la défense
- * occupe de cases, plus elle contraint les routes possibles de l'attaque au palier suivant.
+ * aucun dégât, la plus étalée l'emporte (`spreadScore`), et surtout celle dont les tours sont
+ * postées le plus près du château — plus la défense y contraint les routes possibles de
+ * l'attaque au palier suivant.
  */
 function scoreDefense(
   towers: readonly TowerInstance[],
   wave: Wave,
   chateauMaxHp: number,
+  chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
   towerCatalog: readonly TowerType[],
 ): number {
-  return phaseScore(towers, wave, chateauMaxHp, monsterCatalog, towerCatalog, 'defense');
+  return phaseScore(towers, wave, chateauMaxHp, chateau, monsterCatalog, towerCatalog, 'defense');
 }
 
 /** Trie `candidates` par score décroissant (mode 'defense') et n'en garde que les `count` meilleures. */
@@ -214,13 +216,14 @@ function fittestDefenses(
   count: number,
   wave: Wave,
   chateauMaxHp: number,
+  chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
   towerCatalog: readonly TowerType[],
 ): TowerInstance[][] {
   return candidates
     .map((towers) => ({
       towers: [...towers],
-      score: scoreDefense(towers, wave, chateauMaxHp, monsterCatalog, towerCatalog),
+      score: scoreDefense(towers, wave, chateauMaxHp, chateau, monsterCatalog, towerCatalog),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, count)
@@ -262,6 +265,7 @@ export function evolveDefense(
     populationSize,
     wave,
     chateauMaxHp,
+    map.chateau,
     monsterCatalog,
     towerCatalog,
   );
@@ -278,6 +282,7 @@ export function evolveDefense(
       populationSize,
       wave,
       chateauMaxHp,
+      map.chateau,
       monsterCatalog,
       towerCatalog,
     );

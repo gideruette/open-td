@@ -135,8 +135,8 @@ describe('evolveDefense', () => {
     const withTowers = new DefenseSimulation(towers, wave, 100, [deadly], [strongArcher]);
     expect(withTowers.runToCompletion()).toBe('success');
 
-    const scoreWithTowers = phaseScore(towers, wave, 100, [deadly], [strongArcher], 'defense');
-    const scoreWithoutTowers = phaseScore([], wave, 100, [deadly], [strongArcher], 'defense');
+    const scoreWithTowers = phaseScore(towers, wave, 100, map.chateau, [deadly], [strongArcher], 'defense');
+    const scoreWithoutTowers = phaseScore([], wave, 100, map.chateau, [deadly], [strongArcher], 'defense');
     expect(scoreWithTowers).toBeGreaterThan(scoreWithoutTowers);
   });
 
@@ -152,8 +152,8 @@ describe('evolveDefense', () => {
       { id: 't2', typeId: 'archer', position: { x: 2, y: 1 }, level: 1, placedAtPalier: 0 },
     ];
 
-    const scoreOneTower = phaseScore(oneTower, wave, 100, [gobelin], [lethalArcher], 'defense');
-    const scoreTwoTowers = phaseScore(twoTowers, wave, 100, [gobelin], [lethalArcher], 'defense');
+    const scoreOneTower = phaseScore(oneTower, wave, 100, map.chateau, [gobelin], [lethalArcher], 'defense');
+    const scoreTwoTowers = phaseScore(twoTowers, wave, 100, map.chateau, [gobelin], [lethalArcher], 'defense');
 
     expect(scoreOneTower).toBeGreaterThan(1_000_000); // les deux tiennent (succès), pas juste survivent
     expect(scoreTwoTowers).toBeGreaterThan(scoreOneTower);

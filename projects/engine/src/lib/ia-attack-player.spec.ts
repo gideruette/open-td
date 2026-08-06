@@ -103,10 +103,10 @@ describe('enforceBudget', () => {
 describe('evolveAttackWave', () => {
   it('trouve une vague au moins aussi bonne qu\'un tirage aléatoire (détruit le château, puis s\'étale davantage à destruction égale)', () => {
     const baseline = initRandomWave(map, [], 200, [gobelin]);
-    const baselineScore = phaseScore([], baseline, 50, [gobelin], undefined, 'attack');
+    const baselineScore = phaseScore([], baseline, 50, map.chateau, [gobelin], undefined, 'attack');
 
     const evolved = evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300);
-    const evolvedScore = phaseScore([], evolved, 50, [gobelin], undefined, 'attack');
+    const evolvedScore = phaseScore([], evolved, 50, map.chateau, [gobelin], undefined, 'attack');
 
     expect(evolvedScore).toBeLessThanOrEqual(baselineScore);
   });

@@ -283,17 +283,18 @@ export function crossWaves(
 /**
  * Note une vague avec `phaseScore` en mode 'attack' : entre deux vagues qui échouent à détruire le
  * château, la vie du château restante la plus basse est la plus efficace ; entre deux vagues qui
- * le détruisent, la plus étalée (le plus de cases prises par des routes) l'emporte — plus
- * l'attaque occupe de cases, plus elle contraint les emplacements de tours possibles pour la
- * défense au palier suivant.
+ * le détruisent, la plus étalée l'emporte (`spreadScore`), et surtout celle dont les routes
+ * passent le plus près du château — plus l'attaque y contraint les emplacements de tours
+ * possibles pour la défense au palier suivant.
  */
 function scoreAttackWave(
   wave: Wave,
   towers: readonly TowerInstance[],
   chateauMaxHp: number,
+  chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
 ): number {
-  return phaseScore(towers, wave, chateauMaxHp, monsterCatalog, undefined, 'attack');
+  return phaseScore(towers, wave, chateauMaxHp, chateau, monsterCatalog, undefined, 'attack');
 }
 
 /** Trie `waves` par score croissant (mode 'attack') et n'en garde que les `count` meilleures. */
@@ -302,10 +303,14 @@ function fittestWaves(
   count: number,
   towers: readonly TowerInstance[],
   chateauMaxHp: number,
+  chateau: GridCoord,
   monsterCatalog: readonly MonsterType[],
 ): Wave[] {
   return waves
-    .map((wave) => ({ wave, score: scoreAttackWave(wave, towers, chateauMaxHp, monsterCatalog) }))
+    .map((wave) => ({
+      wave,
+      score: scoreAttackWave(wave, towers, chateauMaxHp, chateau, monsterCatalog),
+    }))
     .sort((a, b) => a.score - b.score)
     .slice(0, count)
     .map((entry) => entry.wave);
@@ -464,6 +469,7 @@ export function evolveAttackWave(
     populationSize,
     towers,
     chateauMaxHp,
+    map.chateau,
     monsterCatalog,
   );
 
@@ -479,6 +485,7 @@ export function evolveAttackWave(
       populationSize,
       towers,
       chateauMaxHp,
+      map.chateau,
       monsterCatalog,
     );
   }

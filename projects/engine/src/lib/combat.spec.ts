@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
+import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
 import { hexToWorld } from 'shared';
-import { DefenseSimulation, phaseScore, selectTarget, spreadCellCount, totalChateauDamage, waveCost } from './combat';
+import { DefenseSimulation, phaseScore, selectTarget, spreadScore, totalChateauDamage, waveCost } from './combat';
 import { pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
 const p2: MapPath = { id: 'p2', nodes: [[0, 3], [20, 3]] };
+const chateau: GridCoord = { x: 20, y: 0 };
 
 function lane(units: WaveUnit[] = [], path: MapPath = p1): WaveLane {
   return { path, units };
@@ -170,10 +171,10 @@ describe('DefenseSimulation', () => {
       const towers = [tower({ typeId: 'strong' })];
       const testWave = wave(lane([{ type: 'unit' }, { type: 'unit' }]));
 
-      const score = phaseScore(towers, testWave, 10, monsterCatalog, towerCatalog, 'defense');
+      const score = phaseScore(towers, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
 
       expect(score).not.toBe(10);
-      expect(score).toBeGreaterThan(spreadCellCount(towers, testWave));
+      expect(score).toBeGreaterThan(spreadScore(towers, testWave, chateau));
     });
 
     it('ranks a more spread-out successful defense above a more compact one', () => {
@@ -186,14 +187,14 @@ describe('DefenseSimulation', () => {
         tower({ id: 't2', typeId: 'strong', position: { x: 11, y: 5 } }),
       ];
 
-      const scoreOneTower = phaseScore(oneTower, testWave, 10, monsterCatalog, towerCatalog, 'defense');
-      const scoreTwoTowers = phaseScore(twoTowers, testWave, 10, monsterCatalog, towerCatalog, 'defense');
+      const scoreOneTower = phaseScore(oneTower, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
+      const scoreTwoTowers = phaseScore(twoTowers, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
 
       expect(scoreTwoTowers).toBeGreaterThan(scoreOneTower);
     });
 
     it('can go negative once the chateau is depleted by more monsters than it has hp for (failure)', () => {
-      const score = phaseScore([], wave(lane([{ type: 'unit' }, { type: 'unit' }])), 1, monsterCatalog, towerCatalog, 'defense');
+      const score = phaseScore([], wave(lane([{ type: 'unit' }, { type: 'unit' }])), 1, chateau, monsterCatalog, towerCatalog, 'defense');
 
       expect(score).toBe(-1);
     });

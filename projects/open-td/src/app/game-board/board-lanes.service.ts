@@ -65,13 +65,15 @@ export class BoardLanesService {
    */
   readonly attackScore = computed(() => {
     const wave = this.toWave(this.lanesState());
-    if (wave.lanes.every((lane) => lane.units.length === 0)) {
+    const map = this.gameState.map();
+    if (!map || wave.lanes.every((lane) => lane.units.length === 0)) {
       return undefined;
     }
     return phaseScore(
       this.gameState.towers(),
       wave,
       this.gameState.chateauMaxHp(),
+      map.chateau,
       undefined,
       undefined,
       'attack',

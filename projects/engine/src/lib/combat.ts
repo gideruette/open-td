@@ -1,12 +1,11 @@
 import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
-import { MONSTER_TYPES, TOWER_TYPES, hexToWorld } from 'shared';
+import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexToWorld } from 'shared';
 import {
   PATH_CELL_COST,
   expandPathCells,
   pathCellsCost,
   pathLength,
   pointAtDistance,
-  shortestPath,
 } from './path';
 
 /** Candidat de ciblage : vue minimale d'un monstre utile au choix de la cible d'une tour. */
@@ -422,28 +421,38 @@ export class DefenseSimulation {
 }
 
 /**
- * Nombre de cases distinctes occupées par des tours ou par une voie de la vague (routes) : la
- * mesure d'« étalement » d'une solution — voir `phaseScore`, qui l'utilise pour départager deux
- * solutions réussissant toutes les deux la phase. Une case comptant à la fois une tour et un bout
- * de route (rare, mais possible sur les voies non tenues par la défense candidate) n'est comptée
- * qu'une fois.
+ * Mesure d'« étalement » d'une solution — voir `phaseScore`, qui l'utilise pour départager deux
+ * solutions réussissant toutes les deux la phase : somme, sur les cases distinctes occupées par
+ * des tours ou par une voie de la vague (routes), d'un poids qui décroît avec la distance hex au
+ * château (`1 / (1 + distance)`) — une case juste devant le château (`distance` 0 ou 1) compte
+ * bien plus qu'une case reléguée en bord de carte, sans jamais tomber à zéro (toute case occupée
+ * reste un gain, même lointaine). Une case comptant à la fois une tour et un bout de route (rare,
+ * mais possible sur les voies non tenues par la défense candidate) n'est comptée qu'une fois.
  */
-export function spreadCellCount(towers: readonly TowerInstance[], wave: Wave): number {
-  const cells = new Set<string>();
+export function spreadScore(
+  towers: readonly TowerInstance[],
+  wave: Wave,
+  chateau: GridCoord,
+): number {
+  const cells = new Map<string, GridCoord>();
   for (const tower of towers) {
-    cells.add(`${tower.position.x},${tower.position.y}`);
+    cells.set(`${tower.position.x},${tower.position.y}`, tower.position);
   }
   for (const lane of wave.lanes) {
     for (const cell of expandPathCells(lane.path)) {
-      cells.add(`${cell.x},${cell.y}`);
+      cells.set(`${cell.x},${cell.y}`, cell);
     }
   }
-  return cells.size;
+  let score = 0;
+  for (const cell of cells.values()) {
+    score += 100 / (1 + hexDistance(cell, chateau));
+  }
+  return score;
 }
 
 /**
  * Décalage utilisé par `phaseScore` pour garantir qu'un score de succès (fonction de l'étalement,
- * voir `spreadCellCount`) reste toujours mieux classé qu'un score d'échec (vie du château restante,
+ * voir `spreadScore`) reste toujours mieux classé qu'un score d'échec (vie du château restante,
  * bornée par `chateauMaxHp`) — bien plus grand que n'importe quelle grille ou vie de château
  * réaliste du jeu.
  */
@@ -459,15 +468,17 @@ const SPREAD_SCORE_BASE = 1_000_000;
  *   score reste une information utile pour départager deux solutions qui échouent toutes les deux.
  * - Succès : deux solutions qui terminent toutes les deux la phase (château intact en défense,
  *   détruit en attaque) ne sont plus départagées par la vie du château restante, mais par leur
- *   étalement (`spreadCellCount`) — la plus étalée (le plus de cases prises par des routes ou des
- *   tours) l'emporte : plus un joueur occupe de cases, plus il contraint son adversaire au palier
- *   suivant (moins de cases libres où tracer une route ou poser une tour). `SPREAD_SCORE_BASE`
- *   assure que ce score reste toujours strictement meilleur qu'un score d'échec.
+ *   étalement (`spreadScore`) — la plus étalée, et surtout la plus proche du château, l'emporte :
+ *   plus un joueur occupe de cases proches du château, plus il contraint son adversaire au palier
+ *   suivant (moins de cases libres où tracer une route ou poser une tour, précisément là où ça
+ *   compte le plus). `SPREAD_SCORE_BASE` assure que ce score reste toujours strictement meilleur
+ *   qu'un score d'échec.
  */
 export function phaseScore(
   towers: readonly TowerInstance[],
   wave: Wave,
   chateauMaxHp: number,
+  chateau: GridCoord,
   monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
   mode: SimulationMode = 'defense',
@@ -485,6 +496,6 @@ export function phaseScore(
   if (simulation.getOutcome() === 'failure') {
     return simulation.getChateauHp();
   }
-  const spread = spreadCellCount(towers, wave);
+  const spread = spreadScore(towers, wave, chateau);
   return mode === 'defense' ? SPREAD_SCORE_BASE + spread : -(SPREAD_SCORE_BASE + spread);
 }

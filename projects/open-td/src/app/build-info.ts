@@ -1,3 +1,3 @@
 // Fichier généré automatiquement avant chaque build/serve (voir scripts/generate-build-info.mjs).
 // Ne pas éditer à la main : le contenu est écrasé à chaque exécution.
-export const BUILD_DATE = '2026-08-06T07:05:38.182Z';
+export const BUILD_DATE = '2026-08-06T07:20:18.261Z';

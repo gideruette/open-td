@@ -59,13 +59,15 @@ export class BoardDefenseService {
    */
   readonly defenseScore = computed(() => {
     const wave = this.gameState.vagueCourante();
-    if (!wave) {
+    const map = this.gameState.map();
+    if (!wave || !map) {
       return undefined;
     }
     return phaseScore(
       this.gameState.towers(),
       wave,
       this.gameState.chateauMaxHp(),
+      map.chateau,
       undefined,
       undefined,
       'defense',
