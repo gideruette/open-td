@@ -541,7 +541,7 @@ export class GameBoard implements OnInit {
   }
 
   ngOnInit(): void {
-    void this.bootstrap();
+    this.bootstrap();
   }
 
   protected onLaunch(): void {
@@ -1280,32 +1280,30 @@ export class GameBoard implements OnInit {
     return targets;
   }
 
-  private async bootstrap(): Promise<void> {
-    const mapId = this.mapId();
-    const catalogEntry = findMapCatalogEntry(mapId);
+  /**
+   * La géométrie vient du catalogue (`shared`) et non plus d'un JSON chargé au runtime : c'est la
+   * même carte, au même exemplaire, que celle sur laquelle tournent les harnais d'équilibre.
+   * La partager sans copie est sans risque, le moteur republiant toujours une nouvelle carte
+   * (`addMapPath`, `removeMapPath`…) au lieu de muter celle qu'on lui donne.
+   */
+  private bootstrap(): void {
+    const catalogEntry = findMapCatalogEntry(this.mapId());
     if (!catalogEntry) {
       this.messages.set('Carte inconnue.');
       return;
     }
     this.biomeColors.set(BIOME_COLORS[catalogEntry.biome]);
-    try {
-      const map = await fetch(`maps/${mapId}.map.json`).then(
-        (response) => response.json() as Promise<GameMap>,
-      );
-      // Développe les rivières en cases une bonne fois pour toutes (index mémoïsé sur `map.rivers`,
-      // donc conservé même quand un tracé republie la carte) : sans ça, le premier `shortestPath`
-      // venu — tracé manuel ou premier tour d'IA — paierait ce développement en pleine interaction.
-      riverCells(map);
-      this.decor.set(generateDecor(map));
-      this.riverTexture.set(generatePathTexture(map.rivers ?? [], `${map.id}:river`));
-      this.gameState.startRun(map, catalogEntry.startingData);
-      this.matchService.configure(this.slots());
-      this.resetView();
-      this.maybeStartAiTurn();
-    } catch (error) {
-      console.error('Impossible de charger la carte', error);
-      this.messages.set('Impossible de charger la carte.');
-    }
+    const map = catalogEntry.geometry;
+    // Développe les rivières en cases une bonne fois pour toutes (index mémoïsé sur `map.rivers`,
+    // donc conservé même quand un tracé republie la carte) : sans ça, le premier `shortestPath`
+    // venu — tracé manuel ou premier tour d'IA — paierait ce développement en pleine interaction.
+    riverCells(map);
+    this.decor.set(generateDecor(map));
+    this.riverTexture.set(generatePathTexture(map.rivers ?? [], `${map.id}:river`));
+    this.gameState.startRun(map, catalogEntry.startingData);
+    this.matchService.configure(this.slots());
+    this.resetView();
+    this.maybeStartAiTurn();
   }
 
   /** Position du curseur en world-space (unité = distance entre centres voisins). */

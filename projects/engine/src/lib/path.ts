@@ -249,6 +249,68 @@ export function simplifyPathCells(cells: readonly GridCoord[]): GridCoord[] {
  * les cases occupées par une tour et les rivières. Cases traversées, `from` exclue et `to` incluse
  * (même convention que `hexLinedraw`) ; `undefined` si `to` est inatteignable (encerclée de tours).
  */
+/**
+ * Prédécesseur de chaque case de la grille sur un plus court chemin vers le château, obtenu par un
+ * unique BFS **depuis** le château. Le graphe étant non orienté et à coût uniforme, remonter les
+ * prédécesseurs depuis une case donnée reconstitue un plus court chemin de cette case au château —
+ * en O(longueur du chemin) au lieu d'un BFS complet.
+ *
+ * C'est le cas qui revient sans cesse : le dernier tronçon de **toute** route générée vise le
+ * château (`initRandomRoute`, `blendRoutes`, `removeRandomWaypoint` via `routeThroughWaypoints`),
+ * et l'IA d'attaque en trace des milliers par recherche.
+ *
+ * Une case bloquée (tour, rivière) reçoit bien un prédécesseur mais n'est jamais développée : on
+ * peut donc *partir* d'une case bloquée — une case de bord traversée par une rivière, par exemple —
+ * sans jamais en *traverser* une, exactement comme le BFS général ci-dessous.
+ */
+const parentsTowardChateauByMap = new WeakMap<
+  GameMap,
+  WeakMap<object, Map<string, GridCoord>>
+>();
+
+function parentsTowardChateau(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+): Map<string, GridCoord> {
+  let byFortress = parentsTowardChateauByMap.get(map);
+  if (!byFortress) {
+    byFortress = new WeakMap<object, Map<string, GridCoord>>();
+    parentsTowardChateauByMap.set(map, byFortress);
+  }
+  const cached = byFortress.get(towers);
+  if (cached) {
+    return cached;
+  }
+
+  const rivers = riverCells(map);
+  const occupied = towerCells(towers);
+  const parents = new Map<string, GridCoord>();
+  const visited = new Set<string>([cellKey(map.chateau)]);
+  const queue: GridCoord[] = [map.chateau];
+  for (let head = 0; head < queue.length; head++) {
+    const current = queue[head];
+    for (const neighbor of hexNeighbors(current)) {
+      if (!isWithinGrid(map, neighbor)) {
+        continue;
+      }
+      const key = cellKey(neighbor);
+      if (visited.has(key)) {
+        continue;
+      }
+      visited.add(key);
+      parents.set(key, current);
+      if (occupied.has(key) || rivers.has(key)) {
+        // Atteignable comme point de départ, jamais comme case de passage.
+        continue;
+      }
+      queue.push(neighbor);
+    }
+  }
+
+  byFortress.set(towers, parents);
+  return parents;
+}
+
 export function shortestPath(
   map: GameMap,
   towers: readonly TowerInstance[],
@@ -259,6 +321,21 @@ export function shortestPath(
   const toKey = cellKey(to);
   if (fromKey === toKey) {
     return [];
+  }
+
+  // Route vers le château : remontée des prédécesseurs mémoïsés plutôt qu'un BFS de plus.
+  if (toKey === cellKey(map.chateau)) {
+    const parents = parentsTowardChateau(map, towers);
+    const path: GridCoord[] = [];
+    let step = parents.get(fromKey);
+    while (step) {
+      path.push(step);
+      if (cellKey(step) === toKey) {
+        return path;
+      }
+      step = parents.get(cellKey(step));
+    }
+    return undefined;
   }
 
   // Obstacles indexés plutôt que testés un à un : `isRiverCell` redéveloppait les rivières en cases

@@ -18,7 +18,9 @@
         </span>
         <span class="map-card__name">{{ entry.name }}</span>
         <span class="map-card__meta">
-          <span class="map-card__dimensions">{{ entry.grid.cols }} × {{ entry.grid.rows }}</span>
+          <span class="map-card__dimensions"
+            >{{ entry.geometry.grid.cols }} × {{ entry.geometry.grid.rows }}</span
+          >
           <span class="map-card__difficulty" [attr.data-difficulty]="entry.difficulty">{{
             entry.difficulty
           }}</span>

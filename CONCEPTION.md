@@ -301,9 +301,9 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
 
 ### Carte MVP
 
-- 1–3 cartes officielles.
-- Spawn(s), 2–3 chemins.
-- Format JSON.
+- 5 cartes officielles, portées par le catalogue partagé (`MAP_CATALOG`, projet `shared`) : géométrie et paramétrage de run au même endroit, importés aussi bien par le jeu que par les harnais d'équilibre. Les cartes ont vécu un temps en `.map.json` chargés au runtime ; chaque harnais devant alors en garder sa propre copie, elles ont divergé.
+- Aucune carte livrée ne fournit de spawn ni de chemin prédéfini : l'attaquant trace toutes ses routes lui-même depuis une case de bord et les paie (§5.3). Le seul relief est la rivière (§4).
+- Le schéma reste celui du type `GameMap` ci-dessous — spawns et chemins prédéfinis restent donc possibles pour une carte future.
 
 ```json
 {

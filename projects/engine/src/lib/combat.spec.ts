@@ -1,12 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
-import { hexToWorld } from 'shared';
-import { DefenseSimulation, phaseScore, selectTarget, spreadScore, totalChateauDamage, waveCost } from './combat';
+import type { GameMap, GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
+import { hexNeighbors, hexToWorld } from 'shared';
+import { DefenseSimulation, attackerRoutingCost, phaseScore, routeExposure, selectTarget, totalChateauDamage, waveCost } from './combat';
 import { pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
 const p2: MapPath = { id: 'p2', nodes: [[0, 3], [20, 3]] };
 const chateau: GridCoord = { x: 20, y: 0 };
+/**
+ * Carte support des scores : `p1` longe le bord haut (y=0), `p2` traverse le milieu (y=3) — de quoi
+ * opposer une route peu exposée à une route très exposée (voir `routeExposure`).
+ */
+const testMap: GameMap = {
+  id: 'combat-map',
+  grid: { cols: 22, rows: 7, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+  chateau,
+  spawns: [],
+  paths: [],
+};
 
 function lane(units: WaveUnit[] = [], path: MapPath = p1): WaveLane {
   return { path, units };
@@ -73,8 +84,11 @@ const splitChild: MonsterType = {
   armored: false,
   chateauDamage: 1,
 };
+/** Identique à `unit` en tout point sauf la vitesse : isole l'effet de la rapidité de résolution. */
+const sluggish: MonsterType = { ...unit, id: 'sluggish', name: 'Sluggish', speed: 0.2 };
 const monsterCatalog: MonsterType[] = [
   unit,
+  sluggish,
   goblin,
   golem,
   regenerating,
@@ -118,6 +132,11 @@ const armorTower: TowerType = {
   armorBonus: 2,
 };
 const towerCatalog: TowerType[] = [weakTower, strongTower, splashTower, slowTower, armorTower];
+/**
+ * Portée réaliste pour mesurer l'exposition d'une route : le catalogue de test tire à 100, ce qui
+ * couvre toute la carte depuis n'importe où et saturerait la mesure.
+ */
+const rangedCatalog: TowerType[] = [{ ...strongTower, range: 3 }];
 
 function tower(overrides: Partial<TowerInstance> = {}): TowerInstance {
   return {
@@ -167,34 +186,201 @@ describe('DefenseSimulation', () => {
   });
 
   describe('phaseScore', () => {
-    it('is derived from the spread (towers + route cells) once every monster is destroyed, not from the chateau hp', () => {
+    it("is derived from the attacker's best remaining route once every monster is destroyed, not from the chateau hp", () => {
       const towers = [tower({ typeId: 'strong' })];
       const testWave = wave(lane([{ type: 'unit' }, { type: 'unit' }]));
 
-      const score = phaseScore(towers, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
+      const score = phaseScore(towers, testWave, 10, testMap, monsterCatalog, towerCatalog, 'defense');
 
       expect(score).not.toBe(10);
-      expect(score).toBeGreaterThan(spreadScore(towers, testWave, chateau));
+      // Régime succès : au-delà du décalage qui le place hors d'atteinte de tout score d'échec.
+      expect(score).toBeGreaterThan(1_000_000);
     });
 
-    it('ranks a more spread-out successful defense above a more compact one', () => {
-      // Les tours sont posées hors du tracé (y=5, la voie longe y=0) pour ne pas se confondre
-      // avec une case de route déjà comptée dans l'étalement.
+    it('ranks a successful defense that leaves the attacker a costlier best route above one that leaves him an easy one', () => {
+      // Une bonne forteresse tient la vague *et* sa disposition empêche de composer une bonne vague
+      // au palier suivant : plus la meilleure route qui reste à l'attaquant est longue et couverte,
+      // meilleure est la forteresse. Ici les deux tours tiennent la vague aussi bien (portée et
+      // frappe surdimensionnées) — seul l'étranglement des routes futures les départage.
       const testWave = wave(lane([{ type: 'unit' }, { type: 'unit' }]));
-      const oneTower = [tower({ typeId: 'strong', position: { x: 10, y: 5 } })];
+      const oneTower = [tower({ typeId: 'strong', position: { x: 19, y: 1 } })];
       const twoTowers = [
-        tower({ typeId: 'strong', position: { x: 10, y: 5 } }),
-        tower({ id: 't2', typeId: 'strong', position: { x: 11, y: 5 } }),
+        tower({ typeId: 'strong', position: { x: 19, y: 1 } }),
+        tower({ id: 't2', typeId: 'strong', position: { x: 18, y: 1 } }),
       ];
 
-      const scoreOneTower = phaseScore(oneTower, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
-      const scoreTwoTowers = phaseScore(twoTowers, testWave, 10, chateau, monsterCatalog, towerCatalog, 'defense');
+      expect(attackerRoutingCost(testMap, twoTowers, towerCatalog)).toBeGreaterThan(
+        attackerRoutingCost(testMap, oneTower, towerCatalog),
+      );
+
+      const scoreOneTower = phaseScore(oneTower, testWave, 10, testMap, monsterCatalog, towerCatalog, 'defense');
+      const scoreTwoTowers = phaseScore(twoTowers, testWave, 10, testMap, monsterCatalog, towerCatalog, 'defense');
 
       expect(scoreTwoTowers).toBeGreaterThan(scoreOneTower);
     });
 
+    it('ranks a successful attack on a sheltered route above one through open ground', () => {
+      // Une bonne vague fait tomber la forteresse par des routes peu exposées aux tours que
+      // l'adversaire pourra bâtir au palier suivant. `p1` longe le bord haut — où rien n'est
+      // constructible — tandis que `p2` traverse le milieu, à portée de bien plus d'emplacements.
+      const sheltered = wave(lane([{ type: 'unit' }, { type: 'unit' }], p1));
+      const exposed = wave(lane([{ type: 'unit' }, { type: 'unit' }], p2));
+
+      expect(routeExposure(testMap, sheltered, rangedCatalog)).toBeLessThan(
+        routeExposure(testMap, exposed, rangedCatalog),
+      );
+
+      // Sans tour, les deux vagues percent : seule l'exposition les départage.
+      const shelteredScore = phaseScore([], sheltered, 2, testMap, monsterCatalog, rangedCatalog, 'attack');
+      const exposedScore = phaseScore([], exposed, 2, testMap, monsterCatalog, rangedCatalog, 'attack');
+
+      // Mode attaque : tri croissant, le plus petit score est le meilleur.
+      expect(shelteredScore).toBeLessThan(exposedScore);
+    });
+
+    it('ranks a defense that clears the wave sooner above one that lets it linger', () => {
+      // Deux tours de même position et de même frappe, seule la cadence change : l'étalement et
+      // les dégâts infligés sont identiques, seule la rapidité de résolution les départage.
+      const sluggishWave = wave(lane([{ type: 'sluggish' }, { type: 'sluggish' }]));
+      const cadenced: TowerType[] = [
+        { ...strongTower, id: 'quick', cooldown: 1 },
+        { ...strongTower, id: 'ponderous', cooldown: 40 },
+      ];
+      const quick = [tower({ typeId: 'quick', position: { x: 19, y: 1 } })];
+      const ponderous = [tower({ typeId: 'ponderous', position: { x: 19, y: 1 } })];
+
+      const quickScore = phaseScore(quick, sluggishWave, 10, testMap, monsterCatalog, cadenced, 'defense');
+      const ponderousScore = phaseScore(ponderous, sluggishWave, 10, testMap, monsterCatalog, cadenced, 'defense');
+
+      // Mode défense : tri décroissant, le plus grand score est le meilleur.
+      expect(quickScore).toBeGreaterThan(ponderousScore);
+    });
+
+    it('shelters a lane with a neighbouring one, whose cells the defender cannot build on', () => {
+      // Les tracés de la vague deviennent des chemins persistants une fois l'attaque emportée
+      // (`GameEngine.resolveAttackSuccess`) : plus aucune tour ne peut s'y poser. Le terrain qu'une
+      // voie prend doit donc lui profiter, à elle comme à ses voies sœurs.
+      const single = wave(lane([{ type: 'unit' }], p2));
+      const paired = wave(
+        lane([{ type: 'unit' }], p2),
+        lane([{ type: 'unit' }], { id: 'p2-bis', nodes: [[0, 4], [20, 4]] }),
+      );
+
+      expect(routeExposure(testMap, paired, rangedCatalog)).toBeLessThan(
+        routeExposure(testMap, single, rangedCatalog),
+      );
+    });
+
+    it('is driven by the least exposed lane, so opening one more never hurts', () => {
+      // Il suffit à l'attaquant d'un seul bon couloir : une voie de plus, même à découvert, ne doit
+      // jamais dégrader la vague. Sans quoi l'optimum reste la voie unique au plus court chemin,
+      // qui laisse la défense fortifier la couronne du château à loisir.
+      const shelteredOnly = wave(lane([{ type: 'unit' }], p1));
+      const plusExposed = wave(lane([{ type: 'unit' }], p1), lane([{ type: 'unit' }], p2));
+
+      // La voie du milieu est bien la plus exposée des deux, prise isolément.
+      expect(routeExposure(testMap, wave(lane([{ type: 'unit' }], p2)), rangedCatalog)).toBeGreaterThan(
+        routeExposure(testMap, shelteredOnly, rangedCatalog),
+      );
+      expect(routeExposure(testMap, plusExposed, rangedCatalog)).toBeLessThanOrEqual(
+        routeExposure(testMap, shelteredOnly, rangedCatalog),
+      );
+    });
+
+    it('counts only cells a tower could actually be built on', () => {
+      // Boucher les emplacements autour d'une route la met à l'abri : c'est le mécanisme même que
+      // l'attaque doit apprendre à exploiter (longer un bord, raser une rivière, se coller à un
+      // chemin existant).
+      const exposed = wave(lane([{ type: 'unit' }], p2));
+      const before = routeExposure(testMap, exposed, rangedCatalog);
+
+      const walled: GameMap = { ...testMap, rivers: [{ id: 'r', nodes: [[0, 5], [21, 5]] }] };
+      expect(routeExposure(walled, exposed, rangedCatalog)).toBeLessThan(before);
+    });
+
+    describe('attackerRoutingCost', () => {
+      /** Château au centre, loin de tout bord : de quoi laisser à l'attaquant de vraies routes à étrangler. */
+      const chokeMap: GameMap = {
+        id: 'choke-map',
+        grid: { cols: 11, rows: 11, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+        chateau: { x: 5, y: 5 },
+        spawns: [],
+        paths: [],
+      };
+      /** Portée 1 : une tour ne couvre que ses voisines, ce qui rend l'étranglement local et lisible. */
+      const guardCatalog: TowerType[] = [{ ...strongTower, id: 'guard', range: 1 }];
+      /** Voie interne à `chokeMap`, du bord haut au château : de quoi mettre une défense en régime succès. */
+      const chokePath: MapPath = { id: 'choke-path', nodes: [[5, 0], [5, 5]] };
+
+      function guard(x: number, y: number): TowerInstance {
+        return tower({ id: `guard-${x}-${y}`, typeId: 'guard', position: { x, y } });
+      }
+
+      it('rises when the towers cover every approach the attacker could take', () => {
+        const bare = attackerRoutingCost(chokeMap, [], guardCatalog);
+        // `strong` porte à 100 : une seule tour couvre toute la carte, donc toute route que
+        // l'attaquant pourrait tracer. Chaque case traversée coûte alors le double.
+        const everywhere = attackerRoutingCost(chokeMap, [tower({ typeId: 'strong' })], towerCatalog);
+
+        expect(everywhere).toBe(2 * bare);
+      });
+
+      it('does not rise when a single tower covers only one approach among several', () => {
+        // Le minimum est la valeur exacte pour l'attaquant : il ne lui faut qu'une bonne route, et il
+        // prendra celle qui reste libre. Sur une carte ouverte, couvrir une approche ne change donc
+        // rien — c'est précisément ce qui rend le départage de `phaseScore` nécessaire, sans quoi la
+        // recherche n'aurait aucun signal tant que toutes les approches ne sont pas couvertes.
+        const bare = attackerRoutingCost(chokeMap, [], guardCatalog);
+
+        expect(attackerRoutingCost(chokeMap, [guard(5, 4)], guardCatalog)).toBe(bare);
+      });
+
+      it('departages two defenses that leave the same best route by what they leave elsewhere', () => {
+        // Deux forteresses qui laissent à l'attaquant exactement la même meilleure route, et tiennent
+        // la vague aussi bien : seule la seconde assèche en plus une partie des routes de repli. C'est
+        // elle que la recherche doit préférer — sans ce départage, les deux seraient indistinguables.
+        const chokeCatalog: TowerType[] = [...towerCatalog, { ...strongTower, id: 'guard', range: 1 }];
+        const chokeWave = wave(lane([{ type: 'unit' }, { type: 'unit' }], chokePath));
+        const bare = [tower({ typeId: 'strong', position: { x: 5, y: 2 } })];
+        const plusFarGuard = [...bare, guard(2, 8)];
+
+        expect(attackerRoutingCost(chokeMap, plusFarGuard, chokeCatalog)).toBe(
+          attackerRoutingCost(chokeMap, bare, chokeCatalog),
+        );
+
+        const scoreBare = phaseScore(bare, chokeWave, 10, chokeMap, monsterCatalog, chokeCatalog, 'defense');
+        const scorePlus = phaseScore(plusFarGuard, chokeWave, 10, chokeMap, monsterCatalog, chokeCatalog, 'defense');
+
+        // Les deux tiennent la vague (régime succès), la tour lointaine ne tire jamais.
+        expect(scoreBare).toBeGreaterThan(1_000_000);
+        expect(scorePlus).toBeGreaterThan(scoreBare);
+      });
+
+      it('reaches a conventional high cost once no border cell reaches the chateau any more', () => {
+        // Les six voisines du château murées : plus aucune route ne peut l'atteindre, l'attaquant ne
+        // peut plus rien tracer. C'est légitime et voulu — la défense a gagné la phase d'avance — mais
+        // le coût doit rester fini pour que le score reste comparable.
+        const walled = hexNeighbors(chokeMap.chateau).map((cell) => guard(cell.x, cell.y));
+
+        const cost = attackerRoutingCost(chokeMap, walled, guardCatalog);
+        expect(cost).toBeGreaterThan(10 * attackerRoutingCost(chokeMap, [], guardCatalog));
+        expect(Number.isFinite(cost)).toBe(true);
+      });
+
+      it('lets the attacker start from a border cell a river makes impassable', () => {
+        // Même règle que `shortestPath` : une case de bord sous une rivière reste utilisable comme
+        // spawn, jamais comme case de passage. L'oublier ferait croire à la défense qu'elle a muré la
+        // carte alors que l'attaquant a encore un départ.
+        const riverEdge: GameMap = { ...chokeMap, rivers: [{ id: 'r', nodes: [[0, 0], [0, 10]] }] };
+
+        expect(attackerRoutingCost(riverEdge, [], guardCatalog)).toBeLessThan(
+          10 * attackerRoutingCost(chokeMap, [], guardCatalog),
+        );
+      });
+    });
+
     it('can go negative once the chateau is depleted by more monsters than it has hp for (failure)', () => {
-      const score = phaseScore([], wave(lane([{ type: 'unit' }, { type: 'unit' }])), 1, chateau, monsterCatalog, towerCatalog, 'defense');
+      const score = phaseScore([], wave(lane([{ type: 'unit' }, { type: 'unit' }])), 1, testMap, monsterCatalog, towerCatalog, 'defense');
 
       expect(score).toBe(-1);
     });
@@ -571,6 +757,108 @@ describe('DefenseSimulation', () => {
   });
 });
 
+describe('phaseScore — déterminisme', () => {
+  /**
+   * Les deux IA mémorisent le score d'un individu d'une génération à l'autre plutôt que de le
+   * re-simuler (voir `evolveAttackWave`/`evolveDefense`) : ce cache n'est valide que parce que la
+   * simulation est parfaitement déterministe. Si un aléa s'y glissait, la recherche se mettrait à
+   * comparer des scores périmés — ce test épingle l'hypothèse à sa racine, pas ses conséquences.
+   */
+  it('gives the exact same score for the same fortress and wave, replay after replay', () => {
+    const towers: TowerInstance[] = [
+      { id: 't1', typeId: 'archer', position: { x: 4, y: 0 }, level: 1, placedAtPalier: 1 },
+      { id: 't2', typeId: 'archer', position: { x: 12, y: 1 }, level: 1, placedAtPalier: 1 },
+    ];
+    const w = wave(
+      lane([{ type: 'goblin' }, { type: 'golem' }, { type: 'goblin' }]),
+      lane([{ type: 'golem' }, { type: 'goblin' }], p2),
+    );
+
+    const scores = Array.from({ length: 5 }, () =>
+      phaseScore(towers, w, 10, testMap, monsterCatalog, towerCatalog, 'attack'),
+    );
+
+    expect(new Set(scores).size).toBe(1);
+  });
+});
+
+describe('DefenseSimulation — positions mémorisées', () => {
+  // `getMonsterPosition` mémorise la position d'un monstre le temps d'un tick pour ne pas la
+  // recalculer à chaque tour qui vise. Ces tests épinglent les deux façons dont ce cache pourrait
+  // corrompre silencieusement un combat : servir une position périmée, ou laisser un appelant
+  // modifier l'entrée mémorisée.
+  function simulationOf(): DefenseSimulation {
+    return new DefenseSimulation(
+      [],
+      wave(lane([{ type: 'unit' }, { type: 'unit' }])),
+      100,
+      [unit],
+      [],
+    );
+  }
+
+  /** Avance jusqu'à ce que `count` monstres soient sur la carte (le premier spawn demande plusieurs ticks). */
+  function stepUntilMonsters(sim: DefenseSimulation, count: number): void {
+    let guard = 0;
+    while (sim.getMonsters().length < count && guard++ < 50) {
+      sim.step();
+    }
+    expect(sim.getMonsters().length).toBeGreaterThanOrEqual(count);
+  }
+
+  it('advances the position as the monster moves along its lane', () => {
+    const sim = simulationOf();
+    stepUntilMonsters(sim, 1);
+    const [monster] = sim.getMonsters();
+    const first = sim.getMonsterPosition(monster);
+
+    sim.step();
+    const later = sim.getMonsterPosition(monster);
+
+    expect(later.x).toBeGreaterThan(first.x);
+  });
+
+  it('returns a fresh object each call, so a caller cannot corrupt the memorized entry', () => {
+    // `game-board` conserve l'objet renvoyé dans son modèle d'affichage : le lui partager
+    // exposerait le cache à toute écriture ultérieure.
+    const sim = simulationOf();
+    stepUntilMonsters(sim, 1);
+    const [monster] = sim.getMonsters();
+
+    const position = sim.getMonsterPosition(monster);
+    const expected = { x: position.x, y: position.y };
+    position.x = 999;
+
+    expect(sim.getMonsterPosition(monster)).toEqual(expected);
+  });
+
+  it('gives a clone its own positions, unaffected by the original advancing', () => {
+    const sim = simulationOf();
+    stepUntilMonsters(sim, 1);
+    const copy = sim.clone();
+    const [original] = sim.getMonsters();
+    const [cloned] = copy.getMonsters();
+    const before = copy.getMonsterPosition(cloned);
+
+    sim.step();
+    sim.step();
+
+    expect(sim.getMonsterPosition(original).x).toBeGreaterThan(before.x);
+    expect(copy.getMonsterPosition(cloned)).toEqual(before);
+  });
+
+  it('situates a monster spawned mid-simulation behind the one already under way', () => {
+    // Un monstre apparu après coup ne doit hériter d'aucune entrée résiduelle du cache : sa
+    // position doit refléter sa propre avancée, pas celle d'un autre.
+    const sim = simulationOf();
+    stepUntilMonsters(sim, 2);
+    const [first, second] = sim.getMonsters();
+
+    expect(second.distance).toBeLessThan(first.distance);
+    expect(sim.getMonsterPosition(second).x).toBeLessThan(sim.getMonsterPosition(first).x);
+  });
+});
+
 describe('selectTarget', () => {
   const towerPosition = { x: 10, y: 5 };
 
@@ -589,6 +877,28 @@ describe('selectTarget', () => {
 
   it('returns undefined when there are no candidates', () => {
     expect(selectTarget(towerPosition, 100, [])).toBeUndefined();
+  });
+
+  it('includes a monster exactly at the range limit, and excludes one just beyond', () => {
+    // Le test de portée compare des carrés de distances plutôt que d'extraire une racine : la
+    // frontière doit rester inclusive, comme lorsqu'elle était écrite `Math.hypot(...) <= range`.
+    const at = { id: 'at', distance: 1, position: { x: towerPosition.x + 4, y: towerPosition.y } };
+    const beyond = {
+      id: 'beyond',
+      distance: 2,
+      position: { x: towerPosition.x + 4.001, y: towerPosition.y },
+    };
+
+    expect(selectTarget(towerPosition, 4, [at])).toBe('at');
+    expect(selectTarget(towerPosition, 4, [beyond])).toBeUndefined();
+  });
+
+  it('keeps the first of two equally advanced monsters', () => {
+    const candidates = [
+      { id: 'first', distance: 5, position: { x: 1, y: 0 } },
+      { id: 'second', distance: 5, position: { x: 2, y: 0 } },
+    ];
+    expect(selectTarget(towerPosition, 100, candidates)).toBe('first');
   });
 });
 

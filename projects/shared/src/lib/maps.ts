@@ -1,4 +1,4 @@
-import type { StartingData } from './types';
+import type { GameMap, HexGrid, StartingData } from './types';
 
 /** Niveau de difficulté indicatif affiché à l'écran de sélection de carte. */
 export type MapDifficulty = 'facile' | 'modérée' | 'difficile';
@@ -27,9 +27,14 @@ export const BIOME_COLORS: Record<MapBiome, MapBiomeColors> = {
 };
 
 /**
- * Entrée du catalogue de cartes de départ (écran d'accueil, CONCEPTION.md §9 « Sélection carte »).
- * La géométrie (`{id}.map.json`) est chargée depuis `public/maps/` une fois la carte choisie ;
- * le paramétrage de la run (budgets, vague #0) est porté directement par le catalogue.
+ * Entrée du catalogue de cartes de départ (écran d'accueil, CONCEPTION.md §9 « Sélection carte ») :
+ * géométrie du plateau et paramétrage de la run (budgets, PV du château).
+ *
+ * La géométrie vit ici, et non plus dans un `{id}.map.json` chargé au runtime, pour qu'il n'en
+ * existe qu'un seul exemplaire. Les harnais d'équilibre tournent sous Vitest, sans accès au disque :
+ * chacun gardait donc sa propre copie des cartes, et elles ont divergé — le harnais IA contre IA
+ * mesurait une « clairiere-02 » sans rivière et à chemins pré-câblés, c'est-à-dire une carte qui
+ * n'existe dans aucune partie. Un import commun rend cette dérive impossible.
  */
 export interface MapCatalogEntry {
   id: string;
@@ -37,11 +42,24 @@ export interface MapCatalogEntry {
   description: string;
   difficulty: MapDifficulty;
   biome: MapBiome;
-  grid: { cols: number; rows: number; cell: 'hex'; orientation: 'pointy'; offset: 'odd-r' };
+  /** Plateau de la carte : grille, château, spawns, chemins prédéfinis, rivières (CONCEPTION.md §8). */
+  geometry: GameMap;
   startingData: StartingData;
 }
 
-/** Les 5 cartes de départ proposées à l'écran d'accueil, de dimensions et difficultés variées. */
+/** Toutes les cartes partagent la même convention de grille hexagonale (CONCEPTION.md §8). */
+const HEX_GRID = { cell: 'hex', orientation: 'pointy', offset: 'odd-r' } as const satisfies Omit<
+  HexGrid,
+  'cols' | 'rows'
+>;
+
+/**
+ * Les 5 cartes de départ proposées à l'écran d'accueil, de dimensions et difficultés variées.
+ *
+ * Aucune ne fournit de spawn ni de chemin prédéfini : l'attaquant trace toutes ses routes lui-même
+ * depuis une case de bord et paie leurs cases sur son budget (CONCEPTION.md §5.3). Le seul relief
+ * est la rivière, jamais constructible et fermée aux tracés (CONCEPTION.md §4).
+ */
 export const MAP_CATALOG: readonly MapCatalogEntry[] = [
   {
     id: 'clairiere-02',
@@ -49,7 +67,14 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Petite carte resserrée, idéale pour découvrir le jeu.',
     difficulty: 'facile',
     biome: 'clairiere',
-    grid: { cols: 16, rows: 12, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+    geometry: {
+      id: 'clairiere-02',
+      grid: { cols: 16, rows: 12, ...HEX_GRID },
+      chateau: { x: 8, y: 6 },
+      spawns: [],
+      paths: [],
+      rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 6], [15, 11]] }],
+    },
     startingData: {
       mapId: 'clairiere-02',
       startingDefenseBudget: 140,
@@ -64,7 +89,14 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Carte plus large et un peu plus difficile',
     difficulty: 'modérée',
     biome: 'foret',
-    grid: { cols: 32, rows: 24, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+    geometry: {
+      id: 'forest-01',
+      grid: { cols: 32, rows: 24, ...HEX_GRID },
+      chateau: { x: 16, y: 12 },
+      spawns: [],
+      paths: [],
+      rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 9], [16, 12], [23, 9], [30, 0]] }],
+    },
     startingData: {
       mapId: 'forest-01',
       startingDefenseBudget: 120,
@@ -79,7 +111,14 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Carte large et basse, avec une rivière sinueuse qui coupe le plateau en deux.',
     difficulty: 'modérée',
     biome: 'marais',
-    grid: { cols: 24, rows: 18, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+    geometry: {
+      id: 'marais-03',
+      grid: { cols: 24, rows: 18, ...HEX_GRID },
+      chateau: { x: 12, y: 9 },
+      spawns: [],
+      paths: [],
+      rivers: [{ id: 'riviere', nodes: [[12, 0], [10, 6], [12, 9], [6, 17]] }],
+    },
     startingData: {
       mapId: 'marais-03',
       startingDefenseBudget: 260,
@@ -94,7 +133,14 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Carte large et basse, avec une rivière sinueuse qui coupe le plateau en deux.',
     difficulty: 'difficile',
     biome: 'toundra',
-    grid: { cols: 48, rows: 16, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+    geometry: {
+      id: 'toundra-05',
+      grid: { cols: 48, rows: 16, ...HEX_GRID },
+      chateau: { x: 24, y: 8 },
+      spawns: [],
+      paths: [],
+      rivers: [{ id: 'riviere', nodes: [[24, 0], [24, 14]] }],
+    },
     startingData: {
       mapId: 'toundra-05',
       startingDefenseBudget: 280,
@@ -109,7 +155,16 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
     description: 'Grande carte',
     difficulty: 'difficile',
     biome: 'montagne',
-    grid: { cols: 40, rows: 30, cell: 'hex', orientation: 'pointy', offset: 'odd-r' },
+    geometry: {
+      id: 'montagne-04',
+      grid: { cols: 40, rows: 30, ...HEX_GRID },
+      chateau: { x: 20, y: 15 },
+      spawns: [],
+      paths: [],
+      rivers: [
+        { id: 'riviere', nodes: [[0, 0], [6, 8], [5, 10], [20, 15], [23, 14], [28, 20], [20, 29]] },
+      ],
+    },
     startingData: {
       mapId: 'montagne-04',
       startingDefenseBudget: 320,

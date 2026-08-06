@@ -26,10 +26,11 @@ export class MapSelect {
   }
 
   protected previewSize(entry: MapCatalogEntry): { width: string; height: string } {
-    const scale = PREVIEW_MAX_SIDE / Math.max(entry.grid.cols, entry.grid.rows);
+    const { cols, rows } = entry.geometry.grid;
+    const scale = PREVIEW_MAX_SIDE / Math.max(cols, rows);
     return {
-      width: `${Math.round(entry.grid.cols * scale)}px`,
-      height: `${Math.round(entry.grid.rows * scale)}px`,
+      width: `${Math.round(cols * scale)}px`,
+      height: `${Math.round(rows * scale)}px`,
     };
   }
 

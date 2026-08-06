@@ -3,14 +3,19 @@ import type { GameMap, TowerInstance, TowerType } from 'shared';
 import {
   canOccupyCell,
   canPlaceTower,
+  cellKey,
   findTowerAt,
   isBorderCell,
   isChateauCell,
   isPathCell,
+  isRiverCell,
   isWithinGrid,
   removeTower,
+  riverCells,
   spentBudget,
+  towerCells,
 } from './fortress';
+import { addMapPath, expandPathCells } from './path';
 
 const map: GameMap = {
   id: 'test-map',
@@ -69,6 +74,87 @@ describe('isPathCell', () => {
 
   it('is false elsewhere', () => {
     expect(isPathCell(map, { x: 1, y: 1 })).toBe(false);
+  });
+});
+
+function tower(id: string, x: number, y: number): TowerInstance {
+  return { id, typeId: 'archer', position: { x, y }, level: 1, placedAtPalier: 1 };
+}
+
+describe('isRiverCell', () => {
+  const riverMap: GameMap = { ...map, rivers: [{ id: 'r', nodes: [[0, 0], [0, 5]] }] };
+
+  it('is true on a cell the river runs through', () => {
+    expect(isRiverCell(riverMap, { x: 0, y: 0 })).toBe(true);
+  });
+
+  it('is false away from the river', () => {
+    expect(isRiverCell(riverMap, { x: 5, y: 0 })).toBe(false);
+  });
+
+  it('is false on a map without rivers', () => {
+    expect(isRiverCell(map, { x: 0, y: 0 })).toBe(false);
+  });
+
+  it('is false on the chateau even when the river runs through it', () => {
+    // La rivière passe visuellement sous le château : un chemin doit pouvoir s'y terminer.
+    const crossing: GameMap = { ...map, rivers: [{ id: 'r', nodes: [[3, 0], [3, 5]] }] };
+    expect(expandPathCells(crossing.rivers![0])).toContainEqual(crossing.chateau);
+    expect(isRiverCell(crossing, crossing.chateau)).toBe(false);
+  });
+});
+
+describe('riverCells', () => {
+  const rivers = [{ id: 'r', nodes: [[3, 0] as [number, number], [3, 5] as [number, number]] }];
+  const riverMap: GameMap = { ...map, rivers };
+
+  it('indexes every river cell except the chateau', () => {
+    const cells = riverCells(riverMap);
+    const expanded = expandPathCells(rivers[0]);
+
+    expect(cells.has(cellKey(riverMap.chateau))).toBe(false);
+    for (const cell of expanded) {
+      expect(cells.has(cellKey(cell))).toBe(isChateauCell(riverMap, cell) === false);
+    }
+  });
+
+  /**
+   * L'index est mémoïsé sur le tableau `rivers`, pas sur la carte : tracer un chemin republie une
+   * carte entière (`addMapPath`) en conservant le même tableau de rivières. Une clé posée sur la
+   * carte serait invalidée à chaque tracé — d'où ce test, qui épingle le choix de clé.
+   */
+  it('keeps its index across a map republished by a path being traced', () => {
+    const before = riverCells(riverMap);
+    const afterTracing = addMapPath(riverMap, { id: 'traced', nodes: [[0, 0], [1, 0]] });
+
+    expect(afterTracing).not.toBe(riverMap);
+    expect(riverCells(afterTracing)).toBe(before);
+  });
+
+  it('gives a map with its own rivers its own index', () => {
+    const other: GameMap = { ...map, rivers: [{ id: 'other', nodes: [[0, 0], [0, 5]] }] };
+    expect(riverCells(other)).not.toBe(riverCells(riverMap));
+  });
+
+  it('is empty for a map without rivers', () => {
+    expect(riverCells(map).size).toBe(0);
+  });
+});
+
+describe('towerCells', () => {
+  it('indexes the cell of every tower', () => {
+    const towers = [tower('t1', 1, 1), tower('t2', 2, 2)];
+    const cells = towerCells(towers);
+
+    expect(cells.has(cellKey({ x: 1, y: 1 }))).toBe(true);
+    expect(cells.has(cellKey({ x: 2, y: 2 }))).toBe(true);
+    expect(cells.has(cellKey({ x: 3, y: 3 }))).toBe(false);
+  });
+
+  it('reuses its index for the same fortress, and rebuilds it for another', () => {
+    const towers = [tower('t1', 1, 1)];
+    expect(towerCells(towers)).toBe(towerCells(towers));
+    expect(towerCells([tower('t1', 1, 1)])).not.toBe(towerCells(towers));
   });
 });
 

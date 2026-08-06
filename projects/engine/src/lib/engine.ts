@@ -13,7 +13,7 @@ import type {
 import { findTowerType, TOWER_TYPES } from 'shared';
 import { DefenseSimulation, waveCost } from './combat';
 import { canOccupyCell, canPlaceTower, removeTower, spentBudget } from './fortress';
-import { addMapPath, addMapSpawn, pruneOrphanSpawns, removeMapPath } from './path';
+import { addMapPath, addMapSpawn, isSpawnCell, pruneOrphanSpawns, removeMapPath } from './path';
 
 /**
  * Moteur de jeu pur (sans DOM) : état complet d'une run (forteresse, budgets,
@@ -30,6 +30,9 @@ export class GameEngine {
   private vagueCourante: Wave | undefined;
   private towers: TowerInstance[] = [];
   private towerSequence = 0;
+  private spawnSequence = 0;
+  /** Ids des voies figées sur la carte par la dernière attaque victorieuse — voir `persistWaveRoutes`. */
+  private persistedRouteIds: string[] = [];
   private savedAttackPlan: Wave = { lanes: [] };
 
   getStatus(): string {
@@ -53,6 +56,8 @@ export class GameEngine {
     this.vagueCourante = undefined;
     this.towers = [];
     this.towerSequence = 0;
+    this.spawnSequence = 0;
+    this.persistedRouteIds = [];
     this.savedAttackPlan = { lanes: [] };
   }
 
@@ -228,11 +233,16 @@ export class GameEngine {
     return new DefenseSimulation(this.towers, this.vagueCourante, this.chateauMaxHp);
   }
 
-  /** Défense réussie : la forteresse est figée, passage en phase Attaque. */
+  /**
+   * Défense réussie : la forteresse est figée, passage en phase Attaque. Les voies de l'attaque
+   * précédente sont défaites de la carte (`releaseWaveRoutes`) : le terrain qu'elles occupaient
+   * redevient constructible, l'attaquant devant repayer son tracé sur son budget à ce palier.
+   */
   resolveDefenseSuccess(): void {
     if (this.phaseState !== 'defense') {
       return;
     }
+    this.releaseWaveRoutes();
     this.phaseState = 'attack';
   }
 
@@ -256,13 +266,73 @@ export class GameEngine {
   }
 
   /**
-   * Attaque réussie : la vague jouée devient vagueCourante, le palier monte,
-   * les deux budgets augmentent, retour en phase Défense (CONCEPTION.md §6).
+   * Fige sur la carte les voies d'une vague victorieuse : leurs tracés deviennent des chemins, et
+   * leur case de départ un spawn, au même titre qu'un chemin prédéfini (CONCEPTION.md §5.3). C'est ce
+   * qui donne au terrain gagné par l'attaquant sa valeur **pendant la phase Défense qui suit** : une
+   * case de chemin n'est plus constructible (`canOccupyCell`), donc chaque route y trace un couloir
+   * dont la défense est exclue — et garantit du même coup qu'un passage relie toujours un bord au
+   * château, la défense ne pouvant jamais l'enfermer.
+   *
+   * Ce terrain n'est acquis que pour un palier : les voies sont défaites dès la phase Attaque suivante
+   * (`releaseWaveRoutes`), l'attaquant devant repayer ses cases de chemin sur son budget à chaque
+   * palier (CONCEPTION.md §5.3). Sans cette libération, les tracés s'accumulaient de palier en palier
+   * — mesuré 4 puis 8 puis 12 puis 19 chemins en cinq paliers — et la carte se couvrait de cases
+   * définitivement inconstructibles, la défense perdant ses emplacements par simple attrition.
+   *
+   * Cette règle vivait jusqu'ici uniquement dans la couche d'affichage (`materializeWave`), si bien
+   * que le jeu sans interface — l'IA contre l'IA, et le harnais d'équilibre qui en tire ses
+   * conclusions — se jouait sans elle et sous-estimait complètement la portée stratégique d'un
+   * tracé. Idempotent : une voie déjà posée par l'interface n'est pas ajoutée deux fois.
+   */
+  private persistWaveRoutes(wave: Wave): void {
+    if (!this.map) {
+      return;
+    }
+    for (const lane of wave.lanes) {
+      const start = lane.path.nodes[0];
+      if (!start) {
+        continue;
+      }
+      const spawn: GridCoord = { x: start[0], y: start[1] };
+      if (!isSpawnCell(this.map, spawn)) {
+        this.map = addMapSpawn(this.map, { id: `spawn-${this.spawnSequence++}`, ...spawn });
+      }
+      if (!this.map.paths.some((path) => path.id === lane.path.id)) {
+        this.map = addMapPath(this.map, lane.path);
+        this.persistedRouteIds.push(lane.path.id);
+      }
+    }
+  }
+
+  /**
+   * Défait les voies figées par la dernière attaque victorieuse (`persistWaveRoutes`) : leurs cases
+   * redeviennent constructibles et les spawns qu'elles seules tenaient disparaissent
+   * (`removeMapPath` élague les spawns orphelins). Appelé à l'entrée de chaque phase Attaque — le
+   * tracé d'une route est repayé sur le budget d'attaque à chaque palier, il n'est donc jamais acquis
+   * plus longtemps que le palier qui l'a payé.
+   *
+   * Ne touche qu'aux voies que le moteur a lui-même figées : les chemins prédéfinis de la carte, eux,
+   * restent en place.
+   */
+  private releaseWaveRoutes(): void {
+    for (const pathId of this.persistedRouteIds) {
+      if (this.map) {
+        this.map = removeMapPath(this.map, pathId);
+      }
+    }
+    this.persistedRouteIds = [];
+  }
+
+  /**
+   * Attaque réussie : la vague jouée devient vagueCourante, ses voies se figent sur la carte
+   * (`persistWaveRoutes`), le palier monte, les deux budgets augmentent, retour en phase Défense
+   * (CONCEPTION.md §6).
    */
   resolveAttackSuccess(wave: Wave): void {
     if (this.phaseState !== 'attack') {
       return;
     }
+    this.persistWaveRoutes(wave);
     this.vagueCourante = wave;
     this.savedAttackPlan = wave;
     this.palier += 1;

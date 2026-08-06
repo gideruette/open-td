@@ -55,8 +55,38 @@ export function riverCells(map: GameMap): ReadonlySet<string> {
   return cells;
 }
 
-/** Ensemble vide partagé, renvoyé pour une carte sans rivière (rien à mémoïser). */
+/** Ensemble vide partagé, renvoyé pour une carte sans rivière ni chemin (rien à mémoïser). */
 const EMPTY_CELLS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Cases traversées par un chemin prédéfini ou tracé — voir `isPathCell`. Mémoïsé sur le **tableau
+ * `paths`** exactement comme `riverCellsByRivers` l'est sur `rivers`, et pour la même raison : le
+ * développement en cases (`expandPathCells`, un `hexLinedraw` par tronçon) est bien trop coûteux
+ * pour être refait à chaque case testée, alors que `canOccupyCell` teste des centaines de cases par
+ * tour candidate. Une carte à deux chemins prédéfinis de 40 cases redéveloppait 80 cases à *chaque*
+ * appel — de loin le premier point chaud de la construction d'une forteresse candidate.
+ */
+const pathCellsByPaths = new WeakMap<object, Set<string>>();
+
+/** Cases occupées par un chemin de la carte, développées une seule fois puis mémoïsées. */
+export function pathCells(map: GameMap): ReadonlySet<string> {
+  const paths = map.paths;
+  if (paths.length === 0) {
+    return EMPTY_CELLS;
+  }
+  const cached = pathCellsByPaths.get(paths);
+  if (cached) {
+    return cached;
+  }
+  const cells = new Set<string>();
+  for (const path of paths) {
+    for (const cell of expandPathCells(path)) {
+      cells.add(cellKey(cell));
+    }
+  }
+  pathCellsByPaths.set(paths, cells);
+  return cells;
+}
 
 /**
  * Cases occupées par une tour, indexées par tableau de tours. Le moteur ne modifie jamais un
@@ -98,9 +128,7 @@ export function isBorderCell(map: GameMap, coord: GridCoord): boolean {
 
 /** Une case traversée par un chemin (prédéfini ou tracé) : jamais constructible. */
 export function isPathCell(map: GameMap, coord: GridCoord): boolean {
-  return map.paths.some((path) =>
-    expandPathCells(path).some((cell) => sameCoord(cell, coord)),
-  );
+  return pathCells(map).has(cellKey(coord));
 }
 
 /**
@@ -163,6 +191,32 @@ export function canOccupyCell(
     return { ok: false, reason: 'occupied' };
   }
   return { ok: true };
+}
+
+/**
+ * Cases de la carte où une tour pourrait être posée sur une forteresse vierge — autrement dit les
+ * emplacements dont l'adversaire dispose au palier suivant, la défense repartant d'une
+ * configuration libre à chaque palier (voir `GameEngine.resetDefenseSession`). Ne dépend donc que
+ * de la géométrie de la carte, ce qui permet de la mémoïser : c'est la base du calcul d'exposition
+ * d'une route (`routeExposure`), qui interroge ce même ensemble pour chaque case de tracé.
+ */
+const buildableCellsByMap = new WeakMap<GameMap, Set<string>>();
+
+export function buildableCells(map: GameMap): ReadonlySet<string> {
+  const cached = buildableCellsByMap.get(map);
+  if (cached) {
+    return cached;
+  }
+  const cells = new Set<string>();
+  for (let x = 0; x < map.grid.cols; x++) {
+    for (let y = 0; y < map.grid.rows; y++) {
+      if (canOccupyCell(map, [], { x, y }).ok) {
+        cells.add(cellKey({ x, y }));
+      }
+    }
+  }
+  buildableCellsByMap.set(map, cells);
+  return cells;
 }
 
 /** Règles de placement d'une tour (grille, occupation, budget). Ne mute rien. */

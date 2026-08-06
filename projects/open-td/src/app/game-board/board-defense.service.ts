@@ -70,7 +70,7 @@ export class BoardDefenseService {
       this.gameState.towers(),
       wave,
       this.gameState.chateauMaxHp(),
-      map.chateau,
+      map,
       undefined,
       undefined,
       'defense',

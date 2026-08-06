@@ -77,7 +77,7 @@ export class BoardLanesService {
       this.gameState.towers(),
       wave,
       this.gameState.chateauMaxHp(),
-      map.chateau,
+      map,
       undefined,
       undefined,
       'attack',

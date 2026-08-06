@@ -307,19 +307,18 @@ export function crossWaves(
 
 /**
  * Note une vague avec `phaseScore` en mode 'attack' : entre deux vagues qui échouent à détruire le
- * château, la vie du château restante la plus basse est la plus efficace ; entre deux vagues qui
- * le détruisent, la plus étalée l'emporte (`spreadScore`), et surtout celle dont les routes
- * passent le plus près du château — plus l'attaque y contraint les emplacements de tours
- * possibles pour la défense au palier suivant.
+ * château, la vie du château restante la plus basse est la plus efficace ; entre deux vagues qui le
+ * détruisent, celle dont les routes s'exposent le moins l'emporte (`routeExposure`) — celles qui
+ * traversent les zones où la défense n'aura presque nulle part où bâtir au palier suivant.
  */
 function scoreAttackWave(
   wave: Wave,
   towers: readonly TowerInstance[],
   chateauMaxHp: number,
-  chateau: GridCoord,
+  map: GameMap,
   monsterCatalog: readonly MonsterType[],
 ): number {
-  return phaseScore(towers, wave, chateauMaxHp, chateau, monsterCatalog, undefined, 'attack');
+  return phaseScore(towers, wave, chateauMaxHp, map, monsterCatalog, undefined, 'attack');
 }
 
 /** Meilleure vague trouvée jusqu'ici (au sens de `scoreAttackWave`, score croissant) et son score. */
@@ -347,21 +346,28 @@ async function fittestWaves(
   count: number,
   towers: readonly TowerInstance[],
   chateauMaxHp: number,
-  chateau: GridCoord,
+  map: GameMap,
   monsterCatalog: readonly MonsterType[],
   iterations: { count: number },
   reporter: ProgressReporter<Wave>,
   seed: BestWave | undefined,
+  knownScores: WeakMap<Wave, number>,
 ): Promise<{ population: Wave[]; best: BestWave | undefined }> {
   const scored: BestWave[] = [];
   let best = seed;
   for (const wave of waves) {
-    const score = scoreAttackWave(wave, towers, chateauMaxHp, chateau, monsterCatalog);
+    const known = knownScores.get(wave);
+    const score = known ?? scoreAttackWave(wave, towers, chateauMaxHp, map, monsterCatalog);
     scored.push({ wave, score });
-    iterations.count++;
     if (!best || score < best.score) {
       best = { wave, score };
     }
+    if (known !== undefined) {
+      // Score déjà connu : ni travail effectué à compter, ni raison de rendre la main à l'IU.
+      continue;
+    }
+    knownScores.set(wave, score);
+    iterations.count++;
     await reporter.report(best.wave, { iterations: iterations.count, score: best.score });
   }
   const population = scored
@@ -719,13 +725,13 @@ function mutateWave(
  *   croisement recombine des files qui peuvent totaliser bien moins que le budget, la mutation
  *   « régénère la file » ne re-dépense que le coût de la voie qu'elle remplace, et le retrait
  *   ci-dessus ne fait que soustraire. Le budget monstres ne pouvait donc que décroître de
- *   génération en génération, pendant que les routes s'allongeaient (`spreadScore` récompense
- *   chaque case occupée) et lui prenaient sa part — la vague finissait bien plus définie par son
- *   tracé que par sa composition.
+ *   génération en génération, pendant que les routes s'allongeaient (l'étalement d'alors récompensait
+ *   chaque case occupée, aussi lointaine fût-elle) et lui prenaient sa part — la vague finissait bien
+ *   plus définie par son tracé que par sa composition.
  *
  * Les voies vidées de tous leurs monstres sont retirées en fin de course, comme le fait
  * `initRandomWave` — mais après le réinvestissement, qui peut regarnir une voie arrivée vide du
- * croisement plutôt que de jeter son tracé (déjà payé, et qui rapporte de l'étalement).
+ * croisement plutôt que de jeter son tracé, déjà payé.
  */
 export function enforceBudget(
   wave: Wave,
@@ -733,20 +739,30 @@ export function enforceBudget(
   monsterCatalog: readonly MonsterType[],
 ): Wave {
   const lanes = cloneLanes(wave);
-  while (waveCost({ lanes }, monsterCatalog) > attackBudget) {
+  const costOf = new Map(monsterCatalog.map((type) => [type.id, type.cost]));
+  // Aucun des deux volets ne touche aux tracés : leur coût est celui de la vague d'entrée, calculé
+  // une fois. Seul le coût des monstres évolue, suivi de façon incrémentale — recalculer `waveCost`
+  // à chaque retrait redéveloppait les chemins en cases (`coveredCells`) pour rien.
+  const routeCost = pathCellsCost(lanes.map((lane) => lane.path));
+  let monstersCost = lanes.reduce(
+    (total, lane) =>
+      total + lane.units.reduce((sum, unit) => sum + (costOf.get(unit.type) ?? 0), 0),
+    0,
+  );
+
+  while (routeCost + monstersCost > attackBudget) {
     const lane = pickRandom(lanes.filter((candidate) => candidate.units.length > 0));
     if (!lane) {
       break;
     }
-    lane.units.splice(Math.floor(Math.random() * lane.units.length), 1);
+    const [removed] = lane.units.splice(Math.floor(Math.random() * lane.units.length), 1);
+    monstersCost -= costOf.get(removed.type) ?? 0;
   }
 
   // Un monstre gratuit rendrait la boucle ci-dessous infinie (budget restant jamais entamé) : on
   // ne réinvestit que dans des types réellement facturés.
   const buyable = buyableMonsters(monsterCatalog).filter((type) => type.cost > 0);
-  // Le coût des cases de chemin ne bouge pas d'une insertion à l'autre : `waveCost` une seule fois
-  // suffit, le reste se décompte au fil des achats.
-  let remaining = attackBudget - waveCost({ lanes }, monsterCatalog);
+  let remaining = attackBudget - routeCost - monstersCost;
   let affordable = buyable.filter((type) => type.cost <= remaining);
   while (lanes.length > 0 && affordable.length > 0) {
     const type = pickRandom(affordable)!;
@@ -798,6 +814,16 @@ export async function evolveAttackWave(
   const iterations = { count: 0 };
   const reporter: ProgressReporter<Wave> = createProgressReporter(onBestFound);
   let best: BestWave | undefined;
+  /**
+   * Scores déjà calculés, pour ne pas re-noter à chaque génération les parents conservés d'une
+   * génération à l'autre : `fittestWaves` reçoit `[...population, ...children]`, dont la moitié a
+   * déjà été notée au tour précédent — soit la moitié du temps de recherche jetée. La simulation
+   * étant déterministe, le score d'une vague donnée ne change pas tant que la forteresse ne change
+   * pas ; le cache est donc créé ici, propre à cette recherche, plutôt que partagé entre appels où
+   * les tours diffèrent. Les vagues filles sont toujours des objets neufs (`enforceBudget` reconstruit
+   * la vague), jamais confondues avec leur parent.
+   */
+  const knownScores = new WeakMap<Wave, number>();
 
   const effectiveMaxLanes = Math.min(
     maxLanes,
@@ -814,11 +840,12 @@ export async function evolveAttackWave(
     populationSize,
     towers,
     chateauMaxHp,
-    map.chateau,
+    map,
     monsterCatalog,
     iterations,
     reporter,
     best,
+    knownScores,
   );
   let population = initialResult.population;
   best = initialResult.best;
@@ -835,11 +862,12 @@ export async function evolveAttackWave(
       populationSize,
       towers,
       chateauMaxHp,
-      map.chateau,
+      map,
       monsterCatalog,
       iterations,
       reporter,
       best,
+      knownScores,
     );
     population = result.population;
     best = result.best;

@@ -111,6 +111,19 @@ describe('enforceBudget', () => {
     expect(enforceBudget(waveOf(), 100, [gobelin])).toEqual({ lanes: [] });
   });
 
+  it('compte le coût des cases de chemin, pas seulement celui des monstres', () => {
+    // Les cases de route sont facturées (CONCEPTION.md §5.3) : un budget qui couvrirait les
+    // monstres mais pas le tracé doit quand même vider la vague.
+    const routeOnlyCost = waveCost(waveOf(laneOf([], routeA)), [gobelin]);
+    expect(routeOnlyCost).toBeGreaterThan(gobelin.cost);
+
+    const wave = waveOf(laneOf([{ type: 'gobelin' }], routeA));
+    expect(enforceBudget(wave, routeOnlyCost - 1, [gobelin]).lanes).toEqual([]);
+    // Juste assez pour le tracé plus un gobelin : la voie survit avec exactement une unité.
+    const tight = enforceBudget(wave, routeOnlyCost + gobelin.cost, [gobelin]);
+    expect(tight.lanes[0].units).toHaveLength(1);
+  });
+
   it('retire les voies vidées de tous leurs monstres', () => {
     const overBudget = waveOf(laneOf([{ type: 'gobelin' }], routeA));
     const trimmed = enforceBudget(overBudget, 0, [gobelin]);
@@ -121,10 +134,10 @@ describe('enforceBudget', () => {
 describe('evolveAttackWave', () => {
   it('trouve une vague au moins aussi bonne qu\'un tirage aléatoire (détruit le château, puis s\'étale davantage à destruction égale)', async () => {
     const baseline = initRandomWave(map, [], 200, [gobelin]);
-    const baselineScore = phaseScore([], baseline, 50, map.chateau, [gobelin], undefined, 'attack');
+    const baselineScore = phaseScore([], baseline, 50, map, [gobelin], undefined, 'attack');
 
     const evolved = await evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300);
-    const evolvedScore = phaseScore([], evolved, 50, map.chateau, [gobelin], undefined, 'attack');
+    const evolvedScore = phaseScore([], evolved, 50, map, [gobelin], undefined, 'attack');
 
     expect(evolvedScore).toBeLessThanOrEqual(baselineScore);
   });
@@ -166,10 +179,10 @@ describe('evolveAttackWave', () => {
   it('rappelle onBestFound à la fin de chaque génération avec la meilleure vague trouvée jusqu\'ici', async () => {
     const seenScores: number[] = [];
     const evolved = await evolveAttackWave(map, [], 200, 50, [gobelin], 3, 10, 300, (best) => {
-      seenScores.push(phaseScore([], best, 50, map.chateau, [gobelin], undefined, 'attack'));
+      seenScores.push(phaseScore([], best, 50, map, [gobelin], undefined, 'attack'));
     });
     expect(seenScores.length).toBeGreaterThan(0);
-    const evolvedScore = phaseScore([], evolved, 50, map.chateau, [gobelin], undefined, 'attack');
+    const evolvedScore = phaseScore([], evolved, 50, map, [gobelin], undefined, 'attack');
     // La sélection ne fait jamais reculer le meilleur score au fil des générations (`fittestWaves`
     // conserve toujours les meilleurs individus, parents compris) : le dernier score publié ne peut
     // pas être meilleur que le résultat final.

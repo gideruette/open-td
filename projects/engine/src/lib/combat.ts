@@ -1,5 +1,14 @@
-import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
-import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexToWorld } from 'shared';
+import type { GameMap, GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
+import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexNeighbors, hexToWorld } from 'shared';
+import {
+  buildableCells,
+  cellKey,
+  isBorderCell,
+  isChateauCell,
+  isWithinGrid,
+  riverCells,
+  towerCells,
+} from './fortress';
 import {
   PATH_CELL_COST,
   type PathGeometry,
@@ -393,32 +402,44 @@ export class DefenseSimulation {
   }
 
   /**
+   * Cible d'une tour parmi les monstres présents : le plus avancé à portée, le premier rencontré à
+   * égalité — mêmes règles que `selectTarget`, dont c'est le pendant interne. Lit directement
+   * `this.monsters` et le cache de positions au lieu de recevoir une liste de candidats : appelée
+   * pour chaque tour à chaque tick, elle n'alloue ainsi rien du tout, là où monter un tableau de
+   * candidats (et son index par id) coûtait des milliers d'objets par simulation.
+   */
+  private pickTarget(worldPosition: GridCoord, range: number): MonsterInstance | undefined {
+    const rangeSquared = range * range;
+    let best: MonsterInstance | undefined;
+    for (const monster of this.monsters) {
+      const position = this.cachedPosition(monster);
+      const dx = position.x - worldPosition.x;
+      const dy = position.y - worldPosition.y;
+      if (dx * dx + dy * dy > rangeSquared) {
+        continue;
+      }
+      if (!best || monster.distance > best.distance) {
+        best = monster;
+      }
+    }
+    return best;
+  }
+
+  /**
    * Fait tirer chaque tour prête. Ni les positions ni la composition de `this.monsters` ne bougent
-   * pendant cette passe (les déplacements ont lieu dans `moveMonsters`, les morts ne sont résolues
-   * qu'à la fin) : la liste des cibles candidates et son index par id sont donc construits **une
-   * seule fois pour toutes les tours**, au lieu d'être reconstruits par chaque tour comme le
-   * faisait l'ancien `pickTarget` — un coût qui croissait en tours × monstres à chaque tick, et qui
-   * dominait le temps de recherche des deux IA.
-   *
-   * Un monstre déjà tombé à 0 PV pendant la passe reste ciblable par les tours suivantes du même
-   * tick, comme auparavant : le surplus compte dans `totalDamageDealt`.
+   * pendant cette passe — les déplacements ont lieu dans `moveMonsters`, les morts ne sont résolues
+   * qu'à la fin — ce qui permet à `pickTarget` de lire l'état courant directement, sans photo
+   * intermédiaire. Un monstre déjà tombé à 0 PV pendant la passe reste ciblable par les tours
+   * suivantes du même tick, comme auparavant : le surplus compte dans `totalDamageDealt`.
    */
   private fireTowers(): void {
-    const candidates: TargetCandidate[] = this.monsters.map((monster) => ({
-      id: monster.id,
-      distance: monster.distance,
-      position: this.cachedPosition(monster),
-    }));
-    const monstersById = new Map(this.monsters.map((monster) => [monster.id, monster]));
-
     for (const { tower, type: towerType, worldPosition } of this.towerStates) {
       const cooldown = this.towerCooldowns.get(tower.id) ?? 0;
       if (cooldown > 0) {
         this.towerCooldowns.set(tower.id, cooldown - 1);
         continue;
       }
-      const targetId = selectTarget(worldPosition, towerType.range, candidates);
-      const target = targetId ? monstersById.get(targetId) : undefined;
+      const target = this.pickTarget(worldPosition, towerType.range);
       if (!target) {
         continue;
       }
@@ -541,42 +562,391 @@ export class DefenseSimulation {
 }
 
 /**
- * Mesure d'« étalement » d'une solution — voir `phaseScore`, qui l'utilise pour départager deux
- * solutions réussissant toutes les deux la phase : somme, sur les cases distinctes occupées par
- * des tours ou par une voie de la vague (routes), d'un poids qui décroît avec la distance hex au
- * château (`1 / (1 + distance)`) — une case juste devant le château (`distance` 0 ou 1) compte
- * bien plus qu'une case reléguée en bord de carte, sans jamais tomber à zéro (toute case occupée
- * reste un gain, même lointaine). Une case comptant à la fois une tour et un bout de route (rare,
- * mais possible sur les voies non tenues par la défense candidate) n'est comptée qu'une fois.
+ * Décalage utilisé par `phaseScore` pour garantir qu'un score de succès (fonction du mérite propre à
+ * chaque camp, voir `attackerRoutingCost` et `routeExposure`) reste toujours mieux classé qu'un
+ * score d'échec (vie du château restante, bornée par `chateauMaxHp`) — bien plus grand que n'importe
+ * quel mérite atteignable sur une grille et une vie de château réalistes du jeu.
+ *
+ * A remplacé une mesure d'« étalement » (`spreadScore`), qui départageait les deux camps par le seul
+ * nombre de cases occupées près du château. Ce n'était qu'un proxy : côté attaque, il récompensait
+ * l'allongement des tracés au détriment du budget des monstres ; côté défense, il récompensait toute
+ * tour posée près du château, qu'elle barre réellement un passage ou non, et ne voyait pas du tout la
+ * couverture par le feu. Les deux camps notent désormais directement ce qu'ils cherchent.
  */
-export function spreadScore(
-  towers: readonly TowerInstance[],
+const SPREAD_SCORE_BASE = 1_000_000;
+
+/**
+ * Exposition d'une vague au feu que l'adversaire pourrait installer au palier suivant : celle de sa
+ * **voie la moins exposée**. L'exposition d'une voie est la somme, sur ses cases distinctes, du
+ * nombre d'emplacements de tour encore disponibles (`buildableCells`) d'où une tour la couvrirait,
+ * portée maximale du catalogue faisant foi. Plus c'est bas, meilleure est la vague.
+ *
+ * C'est ce qui définit une bonne route, une fois la forteresse tombée : une route qui longe un
+ * bord, rase une rivière ou se colle à un chemin existant traverse des zones où l'adversaire n'a
+ * presque nulle part où bâtir, et ses monstres y passeront sous un feu bien plus faible au palier
+ * suivant.
+ *
+ * Le **minimum** sur les voies, et non leur total : il suffit à l'attaquant d'un seul bon couloir
+ * pour faire passer ses monstres. Un total punissait chaque voie supplémentaire et chaque case de
+ * tracé, si bien que son optimum absolu était une voie unique au plus court chemin — exactement la
+ * vague qui laisse la défense fortifier tranquillement la couronne du château, seul point de
+ * passage commun à toutes les routes. Avec le minimum, ouvrir une voie de plus ne peut jamais
+ * dégrader la vague ; seul son coût en cases de chemin (`waveCost`) la retient, ce qui est le bon
+ * arbitrage.
+ *
+ * Les cases de la vague — **toutes voies confondues** — sont exclues des emplacements disponibles :
+ * une fois la vague passée, ses tracés deviennent des chemins persistants
+ * (`GameEngine.resolveAttackSuccess`) et plus aucune tour ne peut s'y poser. C'est le terrain que
+ * l'attaquant gagne, et les voies s'en protègent mutuellement : une voie parallèle à une autre
+ * retire à sa voisine des emplacements de tour, donc abaisse son exposition.
+ *
+ * La défense repartant d'une forteresse libre à chaque palier, les tours actuellement posées
+ * n'entrent pas dans le calcul : ce sont bien les emplacements *potentiels* qui comptent.
+ */
+export function routeExposure(
+  map: GameMap,
   wave: Wave,
-  chateau: GridCoord,
+  towerCatalog: readonly TowerType[] = TOWER_TYPES,
 ): number {
-  const cells = new Map<string, GridCoord>();
-  for (const tower of towers) {
-    cells.set(`${tower.position.x},${tower.position.y}`, tower.position);
+  const range = towerCatalog.reduce((max, type) => Math.max(max, type.range), 0);
+  if (range <= 0 || wave.lanes.length === 0) {
+    return 0;
   }
-  for (const lane of wave.lanes) {
-    for (const cell of expandPathCells(lane.path)) {
-      cells.set(`${cell.x},${cell.y}`, cell);
+  const buildable = buildableCells(map);
+
+  const laneCells = wave.lanes.map((lane) => expandPathCells(lane.path));
+  const takenByWave = new Set<string>();
+  for (const cells of laneCells) {
+    for (const cell of cells) {
+      takenByWave.add(`${cell.x},${cell.y}`);
     }
   }
-  let score = 0;
-  for (const cell of cells.values()) {
-    score += 100 / (1 + hexDistance(cell, chateau));
+
+  let best = Number.POSITIVE_INFINITY;
+  for (const cells of laneCells) {
+    const counted = new Set<string>();
+    let exposure = 0;
+    for (const cell of cells) {
+      if (counted.has(`${cell.x},${cell.y}`)) {
+        continue;
+      }
+      counted.add(`${cell.x},${cell.y}`);
+      // Fenêtre bornée à la grille : une portée démesurée ne doit pas faire balayer le vide.
+      const minX = Math.max(0, cell.x - range);
+      const maxX = Math.min(map.grid.cols - 1, cell.x + range);
+      const minY = Math.max(0, cell.y - range);
+      const maxY = Math.min(map.grid.rows - 1, cell.y + range);
+      for (let x = minX; x <= maxX; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          const key = `${x},${y}`;
+          if (takenByWave.has(key) || !buildable.has(key)) {
+            continue;
+          }
+          if (hexDistance({ x, y }, cell) <= range) {
+            exposure++;
+          }
+        }
+      }
+    }
+    best = Math.min(best, exposure);
   }
-  return score;
+  return best === Number.POSITIVE_INFINITY ? 0 : best;
 }
 
 /**
- * Décalage utilisé par `phaseScore` pour garantir qu'un score de succès (fonction de l'étalement,
- * voir `spreadScore`) reste toujours mieux classé qu'un score d'échec (vie du château restante,
- * bornée par `chateauMaxHp`) — bien plus grand que n'importe quelle grille ou vie de château
- * réaliste du jeu.
+ * Surcoût, pour l'attaquant, d'une case de route couverte par une tour de plus : une case sous le
+ * feu d'une tour lui coûte comme deux cases de détour, sous le feu de deux tours comme trois. C'est
+ * le taux de change entre les deux moitiés de « routes rapides **et** hors de portée » — le monter
+ * pousse la défense à couvrir large, le baisser à barrer court.
+ *
+ * Le décompte est en **nombre de tours** couvrant la case, pas en dégâts par tick : c'est la lecture
+ * littérale de « hors de portée », et elle ne dépend pas de l'équilibrage du catalogue. Pondérer par
+ * le débit de chaque tour serait plus fin, mais rendrait le ralentissement de la tour Glace — dont
+ * tout l'intérêt est d'allonger le temps d'exposition, pas d'infliger des dégâts — structurellement
+ * sous-évalué.
  */
-const SPREAD_SCORE_BASE = 1_000_000;
+const COVERED_CELL_PENALTY = 1;
+
+/**
+ * Coût conventionnel renvoyé par `attackerRoutingCost` quand plus aucune case de bord ne relie le
+ * château : l'attaquant ne peut alors tracer aucune route et perd la phase d'office. Fini plutôt
+ * qu'infini pour que le score reste comparable, et largement en dessous de `SPREAD_SCORE_BASE` pour
+ * qu'un succès reste un succès.
+ */
+const UNREACHABLE_ROUTE_COST = 1_000;
+
+/**
+ * Poids, dans le mérite d'une défense réussie, d'un point de coût imposé à la meilleure route de
+ * l'attaquant (`attackerRoutingCost`) : forcer un détour d'une case, ou couvrir d'une tour de plus
+ * une case qu'il devra traverser, vaut 100 points. Calé sur `RESOLUTION_SPEED_WEIGHT`, si bien que la
+ * rapidité de résolution départage deux forteresses qui étranglent l'attaquant aussi bien, sans
+ * jamais pouvoir renverser un point de coût gagné sur sa meilleure route.
+ */
+const CHOKE_WEIGHT = 100;
+
+/**
+ * Ce que coûte à l'attaquant, contre cette forteresse, l'acheminement de ses monstres jusqu'au
+ * château. Pour chaque case de bord — chacune un spawn possible — le plus court chemin jusqu'au
+ * château (Dijkstra depuis celui-ci), où traverser une case coûte son prix de case de chemin
+ * (`PATH_CELL_COST`, ce que l'attaquant paie réellement sur son budget) plus `COVERED_CELL_PENALTY`
+ * par tour dont la portée la couvre. Rivières et cases occupées par une tour sont infranchissables,
+ * exactement comme pour `shortestPath` — et comme lui, une case de bord infranchissable (sous une
+ * rivière) reste utilisable comme **départ**, jamais comme case de passage.
+ *
+ * C'est ce qui définit une bonne forteresse, une fois la vague tenue : celle dont la disposition
+ * **empêche de composer une bonne vague au palier suivant**. Une bonne vague veut des routes rapides
+ * (courtes) et hors de portée (peu couvertes) — les deux moitiés exactes du coût mesuré ici. Plus il
+ * est haut, moins l'attaquant a de bonnes routes à sa disposition : la défense cherche donc à le
+ * **maximiser**, là où l'attaque cherche à minimiser `routeExposure`. Les deux camps notent ainsi la
+ * même partie depuis leur côté du plateau.
+ *
+ * Le **minimum** sur les départs possibles, comme `routeExposure` prend le minimum sur les voies : il
+ * suffit à l'attaquant d'**une seule** route rapide et hors de portée, c'est donc celle-là que la
+ * défense doit rendre chère. Un spawn dont le château est devenu injoignable sort du calcul.
+ *
+ * La forteresse est prise telle qu'elle est posée (contrairement à `routeExposure`, qui raisonne sur
+ * les emplacements *potentiels*) : c'est bien elle que l'attaque affrontera, la phase Attaque se
+ * jouant contre la forteresse figée du même palier. Empêcher l'attaquant de tracer une route non
+ * exposée, c'est donc exactement ça : qu'aucun couloir ne soit à la fois court et libre de tout feu.
+ */
+export function attackerRoutingCost(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  towerCatalog: readonly TowerType[] = TOWER_TYPES,
+): number {
+  return routingCosts(map, towers, towerCatalog).best;
+}
+
+/**
+ * Coût d'acheminement de l'attaquant sous ses deux formes : `best`, le minimum sur les départs
+ * possibles — la valeur qui compte, voir `attackerRoutingCost` — et `harmonic`, la moyenne harmonique
+ * de tous les départs.
+ *
+ * `harmonic` ne sert qu'à **départager** deux forteresses qui laissent la même meilleure route (voir
+ * `phaseScore`), jamais à définir l'objectif. Sans elle la recherche serait aveugle une bonne partie
+ * du temps : sur une carte ouverte, quatre directions offrent des routes de coût identique, si bien
+ * que couvrir l'une d'elles ne change *rien* au minimum — une tour de plus n'aurait alors aucun effet
+ * sur le score jusqu'à ce que, par chance, toutes les approches soient couvertes à la fois. Dominée
+ * par les routes les moins chères, elle mesure ce qui reste d'offre de bonnes routes une fois la
+ * meilleure égalisée, et fait donc progresser la recherche vers la forteresse qui les assèche toutes.
+ */
+function routingCosts(
+  map: GameMap,
+  towers: readonly TowerInstance[],
+  towerCatalog: readonly TowerType[] = TOWER_TYPES,
+): { best: number; harmonic: number } {
+  const { cols, rows } = map.grid;
+  const size = cols * rows;
+  const rivers = riverCells(map);
+  const occupied = towerCells(towers);
+
+  // Coût d'entrée de chaque case, `Infinity` pour les infranchissables. Indexé à plat plutôt que par
+  // clé de chaîne : cette fonction est appelée une fois par forteresse candidate, soit des milliers
+  // de fois par recherche.
+  const enterCost = new Float64Array(size);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const key = cellKey({ x, y });
+      enterCost[y * cols + x] =
+        rivers.has(key) || occupied.has(key) ? Number.POSITIVE_INFINITY : PATH_CELL_COST;
+    }
+  }
+  // `riverCells` exclut déjà le château, mais une tour n'y est de toute façon jamais posée : la case
+  // du château reste franchissable, c'est l'arrivée de toute route.
+  enterCost[map.chateau.y * cols + map.chateau.x] = PATH_CELL_COST;
+
+  const typeById = new Map(towerCatalog.map((type) => [type.id, type]));
+  for (const tower of towers) {
+    const type = typeById.get(tower.typeId);
+    if (!type) {
+      continue;
+    }
+    const minX = Math.max(0, tower.position.x - type.range);
+    const maxX = Math.min(cols - 1, tower.position.x + type.range);
+    const minY = Math.max(0, tower.position.y - type.range);
+    const maxY = Math.min(rows - 1, tower.position.y + type.range);
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (hexDistance({ x, y }, tower.position) <= type.range) {
+          enterCost[y * cols + x] += COVERED_CELL_PENALTY;
+        }
+      }
+    }
+  }
+
+  const distance = dijkstraFromChateau(map, enterCost);
+
+  // Minimum sur les départs, et moyenne harmonique de tous (somme des inverses sur les spawns encore
+  // reliés, divisée par le nombre total de spawns possibles — un spawn muré ne contribue rien, ce qui
+  // fait monter la moyenne).
+  let best = Number.POSITIVE_INFINITY;
+  let spawnCount = 0;
+  let inverseSum = 0;
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (!isBorderCell(map, { x, y }) || isChateauCell(map, { x, y })) {
+        continue;
+      }
+      spawnCount++;
+      const index = y * cols + x;
+      let cost = distance[index];
+      if (!Number.isFinite(enterCost[index])) {
+        // Case de bord infranchissable : utilisable comme spawn, la route démarre chez un voisin.
+        cost = Number.POSITIVE_INFINITY;
+        for (const neighbor of hexNeighbors({ x, y })) {
+          if (!isWithinGrid(map, neighbor)) {
+            continue;
+          }
+          const neighborDistance = distance[neighbor.y * cols + neighbor.x];
+          if (Number.isFinite(neighborDistance)) {
+            cost = Math.min(cost, neighborDistance + PATH_CELL_COST);
+          }
+        }
+      }
+      if (Number.isFinite(cost) && cost > 0) {
+        inverseSum += 1 / cost;
+        best = Math.min(best, cost);
+      }
+    }
+  }
+  return inverseSum > 0
+    ? { best, harmonic: spawnCount / inverseSum }
+    : { best: UNREACHABLE_ROUTE_COST, harmonic: UNREACHABLE_ROUTE_COST };
+}
+
+/**
+ * Distances minimales du château à chaque case, `enterCost` faisant foi pour le prix d'entrée d'une
+ * case (`Infinity` = infranchissable, jamais développée). Dijkstra à tas binaire plutôt qu'un simple
+ * BFS : les coûts d'entrée ne sont pas uniformes, une case couverte par trois tours coûtant quatre
+ * fois une case libre.
+ */
+function dijkstraFromChateau(map: GameMap, enterCost: Float64Array): Float64Array {
+  const { cols, rows } = map.grid;
+  const distance = new Float64Array(cols * rows).fill(Number.POSITIVE_INFINITY);
+  const start = map.chateau.y * cols + map.chateau.x;
+  // Le château n'est pas facturé : un monstre qui atteint sa case n'est plus vulnérable. `step()` tire
+  // (`fireTowers`) avant de déplacer (`moveMonsters`), et `moveMonsters` retire le monstre dès que sa
+  // distance atteint la longueur totale de la voie — le centre de la case du château. Aucune passe de
+  // tir ne le voit donc jamais dessus : couvrir cette case ne rapporte rien à la défense, seule
+  // l'approche compte, et ce sont les cases précédentes qui la portent.
+  distance[start] = 0;
+
+  // Tas binaire (index de case, distance) en tableaux parallèles.
+  const heapNode: number[] = [start];
+  const heapDistance: number[] = [0];
+
+  const swap = (i: number, j: number): void => {
+    [heapNode[i], heapNode[j]] = [heapNode[j], heapNode[i]];
+    [heapDistance[i], heapDistance[j]] = [heapDistance[j], heapDistance[i]];
+  };
+
+  const push = (node: number, nodeDistance: number): void => {
+    heapNode.push(node);
+    heapDistance.push(nodeDistance);
+    let i = heapNode.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (heapDistance[parent] <= heapDistance[i]) {
+        break;
+      }
+      swap(parent, i);
+      i = parent;
+    }
+  };
+
+  const pop = (): number => {
+    const top = heapNode[0];
+    const lastNode = heapNode.pop()!;
+    const lastDistance = heapDistance.pop()!;
+    if (heapNode.length > 0) {
+      heapNode[0] = lastNode;
+      heapDistance[0] = lastDistance;
+      let i = 0;
+      for (;;) {
+        const left = 2 * i + 1;
+        const right = left + 1;
+        let smallest = i;
+        if (left < heapNode.length && heapDistance[left] < heapDistance[smallest]) {
+          smallest = left;
+        }
+        if (right < heapNode.length && heapDistance[right] < heapDistance[smallest]) {
+          smallest = right;
+        }
+        if (smallest === i) {
+          break;
+        }
+        swap(i, smallest);
+        i = smallest;
+      }
+    }
+    return top;
+  };
+
+  while (heapNode.length > 0) {
+    const currentDistance = heapDistance[0];
+    const current = pop();
+    // Entrée périmée : cette case a déjà été atteinte moins cher depuis.
+    if (currentDistance > distance[current]) {
+      continue;
+    }
+    const x = current % cols;
+    const y = (current - x) / cols;
+    for (const neighbor of hexNeighbors({ x, y })) {
+      if (!isWithinGrid(map, neighbor)) {
+        continue;
+      }
+      const index = neighbor.y * cols + neighbor.x;
+      const step = enterCost[index];
+      if (!Number.isFinite(step)) {
+        continue;
+      }
+      const candidate = currentDistance + step;
+      if (candidate < distance[index]) {
+        distance[index] = candidate;
+        push(index, candidate);
+      }
+    }
+  }
+  return distance;
+}
+
+/**
+ * Poids maximal du critère de rapidité (`resolutionSpeedScore`) dans le mérite d'une défense
+ * réussie : calé sur `CHOKE_WEIGHT`, de sorte que la rapidité départage deux forteresses qui
+ * étranglent l'attaquant aussi bien, sans jamais pouvoir renverser un point de coût gagné sur sa
+ * meilleure route (`attackerRoutingCost`).
+ */
+const RESOLUTION_SPEED_WEIGHT = 100;
+
+/**
+ * Durée (en ticks) autour de laquelle le critère de rapidité est le plus discriminant : à
+ * `RESOLUTION_SPEED_REFERENCE` ticks il vaut la moitié de son maximum. Calé sur l'ordre de grandeur
+ * d'une épreuve réelle (quelques centaines de ticks).
+ */
+const RESOLUTION_SPEED_REFERENCE = 200;
+
+/**
+ * Rapidité avec laquelle une phase réussie a été emportée, dans `]0, RESOLUTION_SPEED_WEIGHT]` :
+ * décroît doucement avec le nombre de ticks, sans jamais s'annuler ni exiger de borne supérieure
+ * sur la durée d'une épreuve.
+ *
+ * C'est le seul terme du régime succès que la **composition** de la vague pilote vraiment, et c'est
+ * là sa raison d'être : à tracés identiques, deux vagues qui détruisent toutes les deux le château
+ * n'étaient jusqu'ici départagées que par `damageBonus`, borné à 1 point face à un étalement qui se
+ * compte en centaines — autant dire pas départagées du tout. Or la vitesse de résolution dépend
+ * directement des monstres choisis face à cette forteresse-là : ceux qui survivent aux tours
+ * arrivent au château, ceux qui frappent fort en font tomber les PV plus vite. C'est donc le signal
+ * qui permet enfin à la recherche de découvrir les contres du catalogue.
+ *
+ * Vaut pour les deux camps : l'attaque veut détruire vite, la défense veut nettoyer la vague vite
+ * (elle garde ainsi de la marge). Contrairement à `damageBonus`, ce terme est donc *signé* selon le
+ * mode — voir `phaseScore`.
+ */
+function resolutionSpeedScore(ticks: number): number {
+  return (
+    (RESOLUTION_SPEED_WEIGHT * RESOLUTION_SPEED_REFERENCE) / (RESOLUTION_SPEED_REFERENCE + ticks)
+  );
+}
 
 /**
  * Vie cumulée des monstres composant `wave` (files de spawn initiales, sans compter les unités
@@ -604,11 +974,25 @@ function totalMonsterHp(wave: Wave, monsterCatalog: readonly MonsterType[]): num
  *   survécu sans être détruit (score alors strictement positif). Dans les deux cas, l'ampleur du
  *   score reste une information utile pour départager deux solutions qui échouent toutes les deux.
  * - Succès : deux solutions qui terminent toutes les deux la phase (château intact en défense,
- *   détruit en attaque) ne sont plus départagées par la vie du château restante, mais par leur
- *   étalement (`spreadScore`) — la plus étalée, et surtout la plus proche du château, l'emporte :
- *   plus un joueur occupe de cases proches du château, plus il contraint son adversaire au palier
- *   suivant (moins de cases libres où tracer une route ou poser une tour, précisément là où ça
- *   compte le plus). `SPREAD_SCORE_BASE` assure que ce score reste toujours strictement meilleur
+ *   détruit en attaque) ne sont plus départagées par la vie du château restante, mais par un mérite
+ *   propre à chaque camp — les deux rôles ne sont pas symétriques et n'ont pas la même définition
+ *   du « mieux » :
+ *   - **Attaque** : une bonne vague fait tomber la forteresse, et le fait par des routes **très peu
+ *     exposées** aux tours que l'adversaire pourra bâtir au palier suivant (`routeExposure`, moins
+ *     c'est mieux). Longer un bord, raser une rivière ou se coller à un chemin existant traverse
+ *     des zones où la défense n'a presque nulle part où bâtir. Ce critère remplace l'étalement, qui
+ *     récompensait toute case occupée, si lointaine et si inutile fût-elle, et poussait donc à
+ *     rallonger les tracés au détriment du budget des monstres.
+ *   - **Défense** : une bonne forteresse tient la vague, et sa disposition **empêche de composer une
+ *     bonne vague au palier suivant** — elle rend cher à l'attaquant tout ce qu'il cherche, des
+ *     routes rapides et hors de portée (`attackerRoutingCost`, plus c'est haut mieux c'est). C'est
+ *     le miroir exact du critère de l'attaque. Ce critère remplace l'étalement, qui n'en était qu'un
+ *     proxy grossier : il récompensait toute case occupée près du château, qu'elle barre réellement
+ *     un passage ou non, et ne voyait pas du tout la couverture par le feu des tours. S'y ajoute la
+ *     **rapidité de résolution** (`resolutionSpeedScore`) : nettoyer la vague tôt, c'est de la marge
+ *     en plus.
+ *
+ *   `SPREAD_SCORE_BASE` assure dans les deux cas que ce score reste toujours strictement meilleur
  *   qu'un score d'échec.
  *
  * Dans les deux régimes, un bonus supplémentaire (`damageBonus`, dans `[0, 1]`) récompense les
@@ -626,7 +1010,7 @@ export function phaseScore(
   towers: readonly TowerInstance[],
   wave: Wave,
   chateauMaxHp: number,
-  chateau: GridCoord,
+  map: GameMap,
   monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
   mode: SimulationMode = 'defense',
@@ -648,7 +1032,19 @@ export function phaseScore(
   if (simulation.getOutcome() === 'failure') {
     return simulation.getChateauHp() + damageBonus;
   }
-  const spread = spreadScore(towers, wave, chateau);
-  const signedBase = mode === 'defense' ? SPREAD_SCORE_BASE + spread : -(SPREAD_SCORE_BASE + spread);
-  return signedBase + damageBonus;
+  if (mode === 'defense') {
+    const routing = routingCosts(map, towers, towerCatalog);
+    // Les coûts d'entrée étant entiers (`PATH_CELL_COST` + `COVERED_CELL_PENALTY` par tour), `best`
+    // l'est aussi : un départage ramené dans `[0, 1[` ne peut jamais renverser un point gagné sur la
+    // meilleure route de l'attaquant, seulement trancher entre deux forteresses qui la laissent
+    // identique.
+    const tieBreak = routing.harmonic / (1 + routing.harmonic);
+    const merit =
+      CHOKE_WEIGHT * (routing.best + tieBreak) + resolutionSpeedScore(simulation.getTick());
+    return SPREAD_SCORE_BASE + merit + damageBonus;
+  }
+  // Attaque : le mérite est de s'exposer le moins possible, donc l'opposé de `routeExposure`. Tri
+  // croissant côté attaque (`fittestWaves`), d'où la base négative : moins d'exposition, meilleur
+  // score.
+  return -(SPREAD_SCORE_BASE - routeExposure(map, wave, towerCatalog)) + damageBonus;
 }

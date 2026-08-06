@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { GameMap, TowerInstance, Wave } from 'shared';
+import type { TowerInstance, Wave } from 'shared';
 import { MONSTER_TYPES, TOWER_TYPES, findMapCatalogEntry, findMonsterType, findTowerType } from 'shared';
 import { DefenseSimulation, waveCost } from './combat';
 import { GameEngine } from './engine';
@@ -28,7 +28,7 @@ import { PATH_CELL_COST, coveredCells } from './path';
 
 /** Nombre de parties complètes jouées par carte : l'agrégat n'a de sens que sur plusieurs runs (les IA tirent au hasard, `Math.random` n'est pas seedé, rien n'est reproductible run à run). */
 const RUNS = 8;
-/** Temps de réflexion accordé à chaque IA par phase. Volontairement bas par défaut (vs 1500 ms en jeu réel) — voir la note sur la force des IA en fin de rapport. */
+/** Temps de réflexion accordé à chaque IA par phase. Volontairement bas par défaut (vs 2000 ms en jeu réel, `AI_THINK_TIME_MS`) — voir la note sur la force des IA en fin de rapport. */
 const THINK_MS = 1000;
 /** Garde-fou : rien côté moteur ne borne le nombre de paliers, la partie doit se conclure avant. */
 const MAX_PALIERS = 20;
@@ -43,61 +43,6 @@ const ATTACK_MAX_LANES = 5;
 const ATTACK_POPULATION = 50;
 /** Cartes mesurées. Élargir à `['clairiere-02', 'forest-01', ...]` pour comparer les difficultés. */
 const MAP_IDS: readonly string[] = ['clairiere-02'];
-
-/**
- * Géométrie réelle des cartes, recopiée de `projects/open-td/public/maps/{id}.map.json` (le spec ne
- * peut pas lire le disque, faute de `@types/node`). À resynchroniser si une carte change.
- *
- * Noter `spawns: []` et `paths: []` : c'est bien la situation de jeu — aucune carte ne fournit de
- * chemin, l'IA d'attaque trace toutes ses routes elle-même depuis une case de bord
- * (`initRandomRoute`). Mesurer sur une géométrie à chemins pré-câblés, comme le font les autres
- * specs, donnerait un équilibre qui ne correspond à aucune partie réelle.
- */
-const GRID = { cell: 'hex', orientation: 'pointy', offset: 'odd-r' } as const;
-const MAPS: Readonly<Record<string, GameMap>> = {
-  'clairiere-02': {
-    id: 'clairiere-02',
-    grid: { cols: 16, rows: 12, ...GRID },
-    chateau: { x: 8, y: 6 },
-    spawns: [],
-    paths: [],
-    rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 6], [15, 11]] }],
-  },
-  'forest-01': {
-    id: 'forest-01',
-    grid: { cols: 32, rows: 24, ...GRID },
-    chateau: { x: 16, y: 12 },
-    spawns: [],
-    paths: [],
-    rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 9], [16, 12], [23, 9], [30, 0]] }],
-  },
-  'marais-03': {
-    id: 'marais-03',
-    grid: { cols: 24, rows: 18, ...GRID },
-    chateau: { x: 12, y: 9 },
-    spawns: [],
-    paths: [],
-    rivers: [{ id: 'riviere', nodes: [[12, 0], [10, 6], [12, 9], [6, 17]] }],
-  },
-  'toundra-05': {
-    id: 'toundra-05',
-    grid: { cols: 48, rows: 16, ...GRID },
-    chateau: { x: 24, y: 8 },
-    spawns: [],
-    paths: [],
-    rivers: [{ id: 'riviere', nodes: [[24, 0], [24, 14]] }],
-  },
-  'montagne-04': {
-    id: 'montagne-04',
-    grid: { cols: 40, rows: 30, ...GRID },
-    chateau: { x: 20, y: 15 },
-    spawns: [],
-    paths: [],
-    rivers: [
-      { id: 'riviere', nodes: [[0, 0], [6, 8], [5, 10], [20, 15], [23, 14], [28, 20], [20, 29]] },
-    ],
-  },
-};
 
 /** Issue d'une épreuve, plus le cas dégénéré où la simulation n'a pas convergé dans `maxTicks`. */
 type PhaseOutcome = 'success' | 'failure' | 'non-convergent';
@@ -182,10 +127,13 @@ function towersCost(towers: readonly TowerInstance[]): number {
 // Une partie complète
 // ---------------------------------------------------------------------------
 
-async function playRun(map: GameMap, mapId: string): Promise<RunMetrics> {
-  const startingData = findMapCatalogEntry(mapId)!.startingData;
+async function playRun(mapId: string): Promise<RunMetrics> {
+  // Géométrie et paramétrage viennent tous deux du catalogue partagé : le harnais mesure la carte
+  // que le jeu fait jouer, rivière comprise et sans chemin prédéfini — l'IA d'attaque trace donc
+  // toutes ses routes depuis une case de bord (`initRandomRoute`) et les paie, comme en partie.
+  const { geometry, startingData } = findMapCatalogEntry(mapId)!;
   const engine = new GameEngine();
-  engine.startRun(map, startingData);
+  engine.startRun(geometry, startingData);
 
   const attacks: AttackPhaseMetrics[] = [];
   const defenses: DefensePhaseMetrics[] = [];
@@ -194,10 +142,16 @@ async function playRun(map: GameMap, mapId: string): Promise<RunMetrics> {
   for (let i = 0; i < MAX_PALIERS && winner === 'none'; i++) {
     const palier = engine.getPalier();
 
+    // La carte évolue d'un palier à l'autre : les voies d'une vague victorieuse s'y figent en
+    // chemins persistants (`resolveAttackSuccess`), qui cessent d'être constructibles. Les deux IA
+    // doivent raisonner sur la carte *courante* du moteur, pas sur la géométrie de départ — sinon la
+    // défense propose des tours sur des cases devenues des routes et le moteur les refuse.
+    const currentMap = engine.getMap()!;
+
     // --- Phase Attaque : composer une vague qui détruit la forteresse figée ---
     const attackBudget = engine.getAttackBudget();
     const wave = await evolveAttackWave(
-      map,
+      currentMap,
       engine.getTowers(),
       attackBudget,
       engine.getChateauMaxHp(),
@@ -257,7 +211,9 @@ async function playRun(map: GameMap, mapId: string): Promise<RunMetrics> {
 
     const proposed =
       (await playDefensePhase({
-        map,
+        // Après `resolveAttackSuccess`, la carte porte les voies qui viennent de percer : la défense
+        // doit composer contre celle-là.
+        map: engine.getMap()!,
         wave: vagueCourante,
         defenseBudget,
         chateauMaxHp: engine.getChateauMaxHp(),
@@ -422,7 +378,6 @@ describe('Métriques d\'équilibre IA vs IA', () => {
     it(
       `agrège ${RUNS} parties sur "${mapId}"`,
       async () => {
-        const map = MAPS[mapId];
         const startingData = findMapCatalogEntry(mapId)!.startingData;
         const buyableMonsters = MONSTER_TYPES.filter((type) => !type.internal);
 
@@ -441,7 +396,7 @@ describe('Métriques d\'équilibre IA vs IA', () => {
 
         const runs: RunMetrics[] = [];
         for (let index = 0; index < RUNS; index++) {
-          const run = await playRun(map, mapId);
+          const run = await playRun(mapId);
           runs.push(run);
           console.log(
             `run ${String(index + 1).padStart(2)} : ${run.winner.toUpperCase().padEnd(7)} ` +

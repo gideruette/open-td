@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { GameMap, MapPath, MapSpawn, StartingData, Wave, WaveLane, WaveUnit } from 'shared';
 import { GameEngine } from './engine';
-import { pathCellsCost } from './path';
+import { canOccupyCell, isBorderCell, isChateauCell } from './fortress';
+import { expandPathCells, pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 3], [3, 3]] };
 const p2: MapPath = { id: 'p2', nodes: [[3, 0], [3, 3]] };
@@ -318,6 +319,40 @@ describe('GameEngine', () => {
       engine.startRun(map, makeStartingData());
 
       expect(engine.getVagueCourante()).toBeUndefined();
+    });
+
+    it('freezes the winning wave routes onto the map, so their cells stop being buildable', () => {
+      // Une case de chemin n'est jamais constructible (`canOccupyCell`) : c'est ce qui donne au
+      // terrain gagné par l'attaquant sa valeur durable. La règle vivait auparavant dans la seule
+      // couche d'affichage, donc le jeu sans interface se jouait sans elle.
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+      const traced: MapPath = { id: 'traced', nodes: [[0, 1], [3, 3]] };
+      // Une case intérieure du tracé : ni bord ni château, sinon elle serait déjà inconstructible
+      // pour une autre raison et le test ne prouverait rien.
+      const interior = expandPathCells(traced).find(
+        (cell) => !isBorderCell(map, cell) && !isChateauCell(map, cell),
+      )!;
+      expect(interior).toBeDefined();
+      expect(canOccupyCell(engine.getMap(), [], interior).ok).toBe(true);
+
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }], traced)));
+
+      const updated = engine.getMap()!;
+      expect(updated.paths.map((path) => path.id)).toContain('traced');
+      // Le départ du tracé devient un spawn, comme pour un tracé libre validé.
+      expect(updated.spawns.some((spawn) => spawn.x === 0 && spawn.y === 1)).toBe(true);
+      expect(canOccupyCell(updated, [], interior)).toEqual({ ok: false, reason: 'path-cell' });
+    });
+
+    it('does not add a route the interface already put on the map', () => {
+      // `materializeWave` pose déjà les chemins côté interface : la règle doit être idempotente.
+      const engine = new GameEngine();
+      engine.startRun(map, makeStartingData());
+
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }], p1)));
+
+      expect(engine.getMap()!.paths.filter((path) => path.id === 'p1')).toHaveLength(1);
     });
 
     it('exposes the wave played in the initial attack phase as vagueCourante', () => {

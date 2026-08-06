@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { GameMap, MapPath, TowerInstance } from 'shared';
-import { hexToWorld } from 'shared';
+import { hexDistance, hexNeighbors, hexToWorld } from 'shared';
 import {
   addMapPath,
   addMapSpawn,
+  buildPathGeometry,
   cellsBetween,
   coveredCells,
   expandPathCells,
@@ -15,8 +16,11 @@ import {
   pathCellsCost,
   pathLength,
   pointAtDistance,
+  pointAtDistanceOn,
   pruneOrphanSpawns,
   removeMapPath,
+  routeThroughWaypoints,
+  shortestPath,
 } from './path';
 
 const straightPath: MapPath = {
@@ -312,6 +316,210 @@ describe('isAdjacentCell', () => {
 
   it('rejects non-adjacent cells', () => {
     expect(isAdjacentCell({ x: 1, y: 1 }, { x: 3, y: 1 })).toBe(false);
+  });
+});
+
+describe('buildPathGeometry', () => {
+  it('exposes one world center per traversed cell, with cumulative distances from the spawn', () => {
+    const geometry = buildPathGeometry(straightPath);
+    const cells = expandPathCells(straightPath);
+
+    expect(geometry.centers).toHaveLength(cells.length);
+    expect(geometry.centers[0]).toEqual(hexToWorld(cells[0]));
+    expect(geometry.cumulative[0]).toBe(0);
+    expect(geometry.cumulative).toHaveLength(cells.length);
+    // Strictement croissante : chaque case suivante est plus loin du spawn que la précédente.
+    for (let i = 1; i < geometry.cumulative.length; i++) {
+      expect(geometry.cumulative[i]).toBeGreaterThan(geometry.cumulative[i - 1]);
+    }
+  });
+
+  it('agrees with pathLength on the total, including for a single-node path', () => {
+    expect(buildPathGeometry(bentPath).totalLength).toBeCloseTo(pathLength(bentPath), 10);
+    expect(buildPathGeometry({ id: 'dot', nodes: [[1, 1]] }).totalLength).toBe(0);
+  });
+});
+
+describe('pointAtDistanceOn', () => {
+  // La recherche des IA situe les monstres via la géométrie précalculée plutôt qu'en redéveloppant
+  // le chemin (`pointAtDistance`) : les deux doivent rendre exactement le même point, sans quoi
+  // l'optimisation changerait le déroulé des combats.
+  it('matches pointAtDistance all along the path, ends and out-of-range included', () => {
+    const geometry = buildPathGeometry(bentPath);
+    const total = geometry.totalLength;
+    const distances = [-1, 0, 0.25, 1, 1.5, total / 2, total - 0.1, total, total + 5];
+
+    for (const distance of distances) {
+      const viaGeometry = pointAtDistanceOn(geometry, distance);
+      const viaPath = pointAtDistance(bentPath, distance);
+      expect(viaGeometry.x).toBeCloseTo(viaPath.x, 10);
+      expect(viaGeometry.y).toBeCloseTo(viaPath.y, 10);
+    }
+  });
+
+  it('lands exactly on a cell center when the distance is that of a cell', () => {
+    const geometry = buildPathGeometry(bentPath);
+    const third = geometry.cumulative[3];
+    expect(pointAtDistanceOn(geometry, third)).toEqual(geometry.centers[3]);
+  });
+
+  it('returns the origin for an empty path', () => {
+    expect(pointAtDistanceOn(buildPathGeometry({ id: 'empty', nodes: [] }), 3)).toEqual({
+      x: 0,
+      y: 0,
+    });
+  });
+});
+
+describe('shortestPath', () => {
+  /** Cases contiguës deux à deux : un chemin qui « saute » une case serait injouable. */
+  function isContiguous(cells: readonly { x: number; y: number }[]): boolean {
+    return cells.every((cell, i) => i === 0 || isAdjacentCell(cells[i - 1], cell));
+  }
+
+  it('is empty when the destination is the origin', () => {
+    expect(shortestPath(tracingMap, [], { x: 2, y: 2 }, { x: 2, y: 2 })).toEqual([]);
+  });
+
+  it('excludes the origin and includes the destination, in contiguous steps', () => {
+    const steps = shortestPath(tracingMap, [], { x: 0, y: 0 }, { x: 3, y: 0 })!;
+
+    expect(steps).toBeDefined();
+    expect(steps).not.toContainEqual({ x: 0, y: 0 });
+    expect(steps[steps.length - 1]).toEqual({ x: 3, y: 0 });
+    expect(isContiguous([{ x: 0, y: 0 }, ...steps])).toBe(true);
+  });
+
+  it('takes the shortest route: as many steps as the hex distance when nothing blocks', () => {
+    const from = { x: 0, y: 0 };
+    const to = { x: 3, y: 3 };
+    const steps = shortestPath(tracingMap, [], from, to)!;
+    expect(steps).toHaveLength(hexDistance(from, to));
+  });
+
+  it('routes around a tower instead of through it', () => {
+    const towers = [tower(1, 0), tower(1, 1)];
+    const steps = shortestPath(tracingMap, towers, { x: 0, y: 0 }, { x: 2, y: 0 })!;
+
+    expect(steps).toBeDefined();
+    expect(steps).not.toContainEqual({ x: 1, y: 0 });
+    expect(steps).not.toContainEqual({ x: 1, y: 1 });
+    expect(isContiguous([{ x: 0, y: 0 }, ...steps])).toBe(true);
+  });
+
+  it('never crosses a river', () => {
+    const river: MapPath = { id: 'r', nodes: [[2, 0], [2, 4]] };
+    const riverMap: GameMap = { ...tracingMap, chateau: { x: 0, y: 4 }, rivers: [river] };
+    const riverKeys = new Set(expandPathCells(river).map((cell) => `${cell.x},${cell.y}`));
+
+    // La rivière coupe la grille en deux : aucune traversée possible d'un bord à l'autre.
+    expect(shortestPath(riverMap, [], { x: 0, y: 0 }, { x: 4, y: 0 })).toBeUndefined();
+
+    const alongside = shortestPath(riverMap, [], { x: 0, y: 0 }, { x: 0, y: 4 })!;
+    expect(alongside).toBeDefined();
+    expect(alongside.some((cell) => riverKeys.has(`${cell.x},${cell.y}`))).toBe(false);
+  });
+
+  it('treats the chateau as traversable even when a river runs through it', () => {
+    // La rivière passe visuellement sous le château : un chemin doit pouvoir s'y terminer.
+    const riverMap: GameMap = {
+      ...tracingMap,
+      chateau: { x: 2, y: 2 },
+      rivers: [{ id: 'r', nodes: [[2, 0], [2, 4]] }],
+    };
+    const steps = shortestPath(riverMap, [], { x: 1, y: 2 }, { x: 2, y: 2 })!;
+    expect(steps).toEqual([{ x: 2, y: 2 }]);
+  });
+
+  it('is undefined when the destination is walled in by towers', () => {
+    const walled = { x: 2, y: 2 };
+    const towers = hexNeighbors(walled).map((cell) => tower(cell.x, cell.y));
+    expect(shortestPath(tracingMap, towers, { x: 0, y: 0 }, walled)).toBeUndefined();
+  });
+
+  it('is undefined when the destination lies outside the grid', () => {
+    expect(shortestPath(tracingMap, [], { x: 0, y: 0 }, { x: 9, y: 9 })).toBeUndefined();
+  });
+
+  // Les routes vers le château passent par un BFS mémoïsé depuis le château plutôt que par le BFS
+  // général : ces deux tests épinglent ce qui doit rester identique entre les deux chemins de code.
+  describe('routes toward the chateau', () => {
+    it('is as short as the same route computed toward any other cell', () => {
+      const from = { x: 0, y: 0 };
+      const toChateau = shortestPath(tracingMap, [], from, tracingMap.chateau)!;
+
+      expect(toChateau).toBeDefined();
+      expect(toChateau).toHaveLength(hexDistance(from, tracingMap.chateau));
+      expect(toChateau[toChateau.length - 1]).toEqual(tracingMap.chateau);
+      expect(isContiguous([from, ...toChateau])).toBe(true);
+    });
+
+    it('can start on a blocked cell without ever crossing one', () => {
+      // Une case de bord traversée par une rivière est un départ légitime (`initRandomRoute` tire
+      // n'importe quelle case de bord), même si aucune route ne peut la traverser.
+      const river: MapPath = { id: 'r', nodes: [[0, 0], [0, 2]] };
+      const riverMap: GameMap = { ...tracingMap, rivers: [river] };
+      const riverKeys = new Set(expandPathCells(river).map((cell) => `${cell.x},${cell.y}`));
+      const start = { x: 0, y: 0 };
+
+      expect(riverKeys.has(`${start.x},${start.y}`)).toBe(true);
+
+      const steps = shortestPath(riverMap, [], start, riverMap.chateau)!;
+      expect(steps).toBeDefined();
+      expect(steps[steps.length - 1]).toEqual(riverMap.chateau);
+      expect(steps.some((cell) => riverKeys.has(`${cell.x},${cell.y}`))).toBe(false);
+      expect(isContiguous([start, ...steps])).toBe(true);
+    });
+
+    it('reflects a fortress that has changed since the last route', () => {
+      // L'index est mémoïsé par tableau de tours : une forteresse republiée doit rendre un tracé à
+      // jour, pas celui d'avant la pose.
+      const from = { x: 4, y: 0 };
+      const before = shortestPath(tracingMap, [], from, tracingMap.chateau)!;
+      expect(before).toContainEqual({ x: 4, y: 1 });
+
+      const after = shortestPath(tracingMap, [tower(4, 1)], from, tracingMap.chateau)!;
+      expect(after).toBeDefined();
+      expect(after).not.toContainEqual({ x: 4, y: 1 });
+      expect(after[after.length - 1]).toEqual(tracingMap.chateau);
+    });
+  });
+});
+
+describe('routeThroughWaypoints', () => {
+  it('passes through each waypoint, in order, on its way to the destination', () => {
+    const waypoint = { x: 0, y: 4 };
+    const cells = routeThroughWaypoints(tracingMap, [], { x: 0, y: 0 }, [waypoint], { x: 4, y: 4 })!;
+
+    expect(cells).toBeDefined();
+    expect(cells).toContainEqual(waypoint);
+    expect(cells.indexOf(cells.find((c) => c.x === 0 && c.y === 4)!)).toBeLessThan(cells.length - 1);
+    expect(cells[cells.length - 1]).toEqual({ x: 4, y: 4 });
+  });
+
+  it('ignores an unreachable waypoint rather than failing the whole route', () => {
+    const walled = { x: 2, y: 2 };
+    const towers = hexNeighbors(walled).map((cell) => tower(cell.x, cell.y));
+    const cells = routeThroughWaypoints(tracingMap, towers, { x: 0, y: 0 }, [walled], { x: 4, y: 4 });
+
+    expect(cells).toBeDefined();
+    expect(cells).not.toContainEqual(walled);
+    expect(cells![cells!.length - 1]).toEqual({ x: 4, y: 4 });
+  });
+
+  it('stops at the chateau when a leg crosses it before the last waypoint', () => {
+    // Le château est en (4, 4) ; viser un jalon au-delà fait passer la route dessus, elle s'arrête là.
+    const cells = routeThroughWaypoints(tracingMap, [], { x: 4, y: 0 }, [{ x: 4, y: 4 }], {
+      x: 0,
+      y: 4,
+    })!;
+    expect(cells[cells.length - 1]).toEqual({ x: 4, y: 4 });
+  });
+
+  it('is undefined when the destination is unreachable from the last valid waypoint', () => {
+    const walled = { x: 4, y: 4 };
+    const towers = hexNeighbors(walled).map((cell) => tower(cell.x, cell.y));
+    expect(routeThroughWaypoints(tracingMap, towers, { x: 0, y: 0 }, [], walled)).toBeUndefined();
   });
 });
 
