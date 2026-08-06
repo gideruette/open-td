@@ -46,6 +46,11 @@ function cellsInRange(map: GameMap, routes: readonly GridCoord[], range: number)
  * aléatoire) jusqu'à trouver un placement valide (`canPlaceTower` : grille, occupation, budget).
  * Brique de base (population initiale, mutations) de l'algorithme génétique — voir aussi
  * `initRandomRoute` côté Attaque. `undefined` si aucun placement n'est possible.
+ *
+ * `routes` restreint les cases candidates à la portée d'un sous-ensemble de voies (par défaut,
+ * toutes celles de `wave`) — `initRandomDefense` s'en sert pour garantir qu'une voie précise
+ * reçoive bien une tour, plutôt que de laisser le tirage au hasard la délaisser entièrement au
+ * profit des autres.
  */
 export function initRandomTower(
   map: GameMap,
@@ -53,8 +58,8 @@ export function initRandomTower(
   wave: Wave,
   remainingBudget: number,
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
+  routes: readonly GridCoord[] = routeCells(wave),
 ): TowerInstance | undefined {
-  const routes = routeCells(wave);
   const buyable = towerCatalog.filter((type) => type.cost <= remainingBudget);
   for (const type of shuffled(buyable)) {
     for (const coord of shuffled(cellsInRange(map, routes, type.range))) {
@@ -73,10 +78,14 @@ export function initRandomTower(
 }
 
 /**
- * Initialise une forteresse candidate aléatoire : tant qu'il reste du budget de défense, pose une
- * tour aléatoire à portée d'une voie de la vague à tenir (`initRandomTower`). S'arrête dès qu'aucun
- * placement n'est plus possible (budget épuisé ou plus aucune case libre à portée). Brique de base
- * (population initiale, mutations) de l'algorithme génétique.
+ * Initialise une forteresse candidate aléatoire : commence par poser, pour chaque voie de la
+ * vague (ordre tiré au hasard), une tour à sa portée (`initRandomTower` restreint à cette seule
+ * voie) — sans quoi le tirage au hasard sur l'ensemble des voies confondues tend à en délaisser
+ * complètement certaines, surtout à budget serré, laissant l'algorithme génétique évoluer une
+ * population où aucune forteresse ne tient jamais les voies négligées. Poursuit ensuite tant qu'il
+ * reste du budget de défense en posant des tours à portée de n'importe quelle voie. S'arrête dès
+ * qu'aucun placement n'est plus possible (budget épuisé ou plus aucune case libre à portée).
+ * Brique de base (population initiale, mutations) de l'algorithme génétique.
  */
 export function initRandomDefense(
   map: GameMap,
@@ -86,6 +95,24 @@ export function initRandomDefense(
 ): TowerInstance[] {
   const towers: TowerInstance[] = [];
   let remainingBudget = defenseBudget;
+
+  for (const lane of shuffled(wave.lanes)) {
+    const tower = initRandomTower(
+      map,
+      towers,
+      wave,
+      remainingBudget,
+      towerCatalog,
+      expandPathCells(lane.path),
+    );
+    if (!tower) {
+      continue;
+    }
+    towers.push(tower);
+    const type = towerCatalog.find((candidate) => candidate.id === tower.typeId)!;
+    remainingBudget -= type.cost;
+  }
+
   for (;;) {
     const tower = initRandomTower(map, towers, wave, remainingBudget, towerCatalog);
     if (!tower) {
