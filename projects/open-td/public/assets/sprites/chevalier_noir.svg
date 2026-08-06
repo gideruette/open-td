@@ -1,24 +1,53 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="steel" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#4a4e58"/>
-      <stop offset="55%" stop-color="#26282e"/>
-      <stop offset="100%" stop-color="#101114"/>
+    <linearGradient id="steel" x1="15%" y1="0%" x2="85%" y2="100%">
+      <stop offset="0%" stop-color="#525762"/>
+      <stop offset="55%" stop-color="#282b32"/>
+      <stop offset="100%" stop-color="#0e0f12"/>
     </linearGradient>
-    <radialGradient id="gloss" cx="32%" cy="20%" r="60%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#7fd0ff"/>
-      <stop offset="100%" stop-color="#1c6fa8"/>
-    </radialGradient>
+    <linearGradient id="cape" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#5a1622"/>
+      <stop offset="100%" stop-color="#26090f"/>
+    </linearGradient>
+    <linearGradient id="blade" x1="0%" y1="100%" x2="60%" y2="0%">
+      <stop offset="0%" stop-color="#9fb4c4"/>
+      <stop offset="100%" stop-color="#e8f2fa"/>
+    </linearGradient>
   </defs>
-  <path d="M32 8 L52 18 L50 38 Q32 58 32 58 Q32 58 14 38 L12 18 Z" fill="url(#steel)" stroke="#000000" stroke-width="1.8"/>
-  <path d="M32 8 L52 18 L50 38 Q32 58 32 58 Q32 58 14 38 L12 18 Z" fill="url(#gloss)"/>
-  <rect x="16" y="26" width="32" height="9" rx="2" fill="#050505"/>
-  <circle cx="24" cy="30.5" r="3" fill="url(#glow)"/>
-  <circle cx="40" cy="30.5" r="3" fill="url(#glow)"/>
-  <path d="M20 18 L32 12 L44 18" stroke="#5a5e68" stroke-width="1.4" fill="none" opacity="0.8"/>
-  <path d="M32 8 L32 58" stroke="#000000" stroke-width="1" opacity="0.3"/>
+  <!-- Cape en arrière-plan -->
+  <path d="M20 22 C10 30 8 42 10 54 L24 48 L22 26 Z" fill="url(#cape)" stroke="#1a060a" stroke-width="1.2"/>
+  <path d="M44 22 C54 30 56 42 54 54 L40 48 L42 26 Z" fill="url(#cape)" stroke="#1a060a" stroke-width="1.2"/>
+  <!-- Épée tenue haute : diagonale qui tranche la silhouette -->
+  <path d="M50 44 L58 8" stroke="url(#blade)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M45 42 L56 45" stroke="#3a3e46" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M49 46 L52 40" stroke="#1a1c20" stroke-width="3.4" stroke-linecap="round"/>
+  <!-- Jambes en grèves -->
+  <path d="M27 44 L25 54" stroke="#2b2e35" stroke-width="6" stroke-linecap="round"/>
+  <path d="M38 44 L40 54" stroke="#353941" stroke-width="6" stroke-linecap="round"/>
+  <path d="M25 53 L18 58 L29 58 Z" fill="#101115"/>
+  <path d="M40 53 L36 58 L47 58 Z" fill="#16181d"/>
+  <!-- Cuirasse en pointe, épaulières saillantes -->
+  <path
+    d="M18 26 C20 21 26 19 32 19 C38 19 44 21 46 26 L44 38 L32 46 L20 38 Z"
+    fill="url(#steel)"
+    stroke="#000000"
+    stroke-width="1.6"
+  />
+  <path d="M14 24 C18 20 24 20 26 24 L24 30 C19 31 15 29 14 24 Z" fill="url(#steel)" stroke="#000000" stroke-width="1.4"/>
+  <path d="M50 24 C46 20 40 20 38 24 L40 30 C45 31 49 29 50 24 Z" fill="url(#steel)" stroke="#000000" stroke-width="1.4"/>
+  <path d="M32 20 L32 45" stroke="#000000" stroke-width="1" opacity="0.45"/>
+  <path d="M22 30 L32 34 L42 30" fill="none" stroke="#5a5f6a" stroke-width="1.2" opacity="0.7"/>
+  <!-- Heaume à cornes, fente unique et non deux gros yeux -->
+  <path
+    d="M24 8 L40 8 L42 16 L38 21 L26 21 L22 16 Z"
+    fill="url(#steel)"
+    stroke="#000000"
+    stroke-width="1.6"
+  />
+  <path d="M24 9 L14 2 L23 14 Z" fill="#2b2e35" stroke="#000000" stroke-width="1.2"/>
+  <path d="M40 9 L50 2 L41 14 Z" fill="#2b2e35" stroke="#000000" stroke-width="1.2"/>
+  <path d="M24 13 L40 13 L40 16.6 L24 16.6 Z" fill="#040405"/>
+  <path d="M25.5 14 L30.5 14 L30.5 15.8 L25.5 15.8 Z" fill="#7fd0ff"/>
+  <path d="M33.5 14 L38.5 14 L38.5 15.8 L33.5 15.8 Z" fill="#7fd0ff"/>
+  <path d="M32 17 L32 21" stroke="#5a5f6a" stroke-width="1" opacity="0.6"/>
 </svg>

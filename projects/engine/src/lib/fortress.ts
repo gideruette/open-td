@@ -11,6 +11,73 @@ function sameCoord(a: GridCoord, b: GridCoord): boolean {
   return a.x === b.x && a.y === b.y;
 }
 
+/** Clé d'indexation d'une case, commune aux ensembles de cases mémoïsés ci-dessous. */
+export function cellKey(coord: GridCoord): string {
+  return `${coord.x},${coord.y}`;
+}
+
+/**
+ * Cases traversées par une rivière — voir `isRiverCell` pour la sémantique (château exclu).
+ * Développer les rivières en cases (`expandPathCells`, un `hexLinedraw` par tronçon) est bien trop
+ * coûteux pour être refait à chaque case testée, alors que le tracé des rivières d'une carte ne
+ * change jamais de toute la partie.
+ *
+ * L'index est mémoïsé sur le **tableau `rivers`**, pas sur l'objet carte : tracer un chemin ou
+ * ajouter un spawn republie une nouvelle carte (`{ ...map, paths: [...] }`, voir `addMapPath`) tout
+ * en conservant le même tableau de rivières. Une clé posée sur la carte serait invalidée à chaque
+ * tracé ; posée sur les rivières, l'index survit à toute la partie.
+ */
+const riverCellsByRivers = new WeakMap<object, Set<string>>();
+
+/**
+ * Cases infranchissables par une rivière sur cette carte (château exclu), développées une seule
+ * fois puis mémoïsées. À appeler dès le chargement de la carte pour que le coût soit payé là
+ * plutôt qu'au premier tracé ou au premier tour d'IA.
+ */
+export function riverCells(map: GameMap): ReadonlySet<string> {
+  const rivers = map.rivers;
+  if (!rivers || rivers.length === 0) {
+    return EMPTY_CELLS;
+  }
+  const cached = riverCellsByRivers.get(rivers);
+  if (cached) {
+    return cached;
+  }
+  const cells = new Set<string>();
+  for (const river of rivers) {
+    for (const cell of expandPathCells(river)) {
+      if (!isChateauCell(map, cell)) {
+        cells.add(cellKey(cell));
+      }
+    }
+  }
+  riverCellsByRivers.set(rivers, cells);
+  return cells;
+}
+
+/** Ensemble vide partagé, renvoyé pour une carte sans rivière (rien à mémoïser). */
+const EMPTY_CELLS: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Cases occupées par une tour, indexées par tableau de tours. Le moteur ne modifie jamais un
+ * tableau de tours en place — il en publie un nouveau à chaque pose, retrait ou déplacement
+ * (`GameEngine`) — donc l'identité du tableau suffit à identifier la forteresse. C'est ce qui rend
+ * l'index réutilisable pendant toute une recherche d'IA, où la forteresse est figée et où
+ * `shortestPath` est appelé des milliers de fois sur elle.
+ */
+const towerCellsByTowers = new WeakMap<object, Set<string>>();
+
+/** Cases occupées par une tour, indexées pour un test en O(1). */
+export function towerCells(towers: readonly TowerInstance[]): ReadonlySet<string> {
+  const cached = towerCellsByTowers.get(towers);
+  if (cached) {
+    return cached;
+  }
+  const cells = new Set(towers.map((tower) => cellKey(tower.position)));
+  towerCellsByTowers.set(towers, cells);
+  return cells;
+}
+
 export function isWithinGrid(map: GameMap, coord: GridCoord): boolean {
   return coord.x >= 0 && coord.y >= 0 && coord.x < map.grid.cols && coord.y < map.grid.rows;
 }
@@ -43,12 +110,7 @@ export function isPathCell(map: GameMap, coord: GridCoord): boolean {
  * (déjà exclue par `isChateauCell`).
  */
 export function isRiverCell(map: GameMap, coord: GridCoord): boolean {
-  if (isChateauCell(map, coord)) {
-    return false;
-  }
-  return (map.rivers ?? []).some((river) =>
-    expandPathCells(river).some((cell) => sameCoord(cell, coord)),
-  );
+  return riverCells(map).has(cellKey(coord));
 }
 
 export function findTowerAt(

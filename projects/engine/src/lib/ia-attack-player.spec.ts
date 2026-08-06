@@ -87,10 +87,28 @@ describe('enforceBudget', () => {
     expect(waveCost(trimmed, [gobelin])).toBeLessThanOrEqual(20);
   });
 
-  it("ne change rien si la vague respecte déjà le budget", () => {
+  it('dépense le budget resté libre au lieu de le laisser inutilisé', () => {
     const withinBudget = waveOf(laneOf([{ type: 'gobelin' }, { type: 'gobelin' }], routeA));
-    const trimmed = enforceBudget(withinBudget, 50, [gobelin]);
-    expect(trimmed.lanes[0].units.length).toBe(2);
+    expect(waveCost(withinBudget, [gobelin])).toBeLessThan(50);
+
+    const filled = enforceBudget(withinBudget, 50, [gobelin]);
+
+    expect(filled.lanes[0].units.length).toBeGreaterThan(2);
+    expect(waveCost(filled, [gobelin])).toBeLessThanOrEqual(50);
+    // Le mou restant ne permet plus d'acheter le moindre monstre : le budget est bien épuisé, pas
+    // seulement entamé.
+    expect(waveCost(filled, [gobelin])).toBeGreaterThan(50 - gobelin.cost);
+  });
+
+  it('garnit une voie arrivée vide du croisement plutôt que de jeter son tracé', () => {
+    const emptyLane = waveOf(laneOf([], routeA));
+    const filled = enforceBudget(emptyLane, 50, [gobelin]);
+    expect(filled.lanes).toHaveLength(1);
+    expect(filled.lanes[0].units.length).toBeGreaterThan(0);
+  });
+
+  it("ne dépense rien sur une vague sans aucune voie (nulle part où poser un monstre)", () => {
+    expect(enforceBudget(waveOf(), 100, [gobelin])).toEqual({ lanes: [] });
   });
 
   it('retire les voies vidées de tous leurs monstres', () => {
@@ -120,6 +138,15 @@ describe('evolveAttackWave', () => {
     const attackBudget = 200;
     const evolved = await evolveAttackWave(map, [], attackBudget, 50, [gobelin], 3, 15, 300);
     expect(waveCost(evolved, [gobelin])).toBeLessThanOrEqual(attackBudget);
+  });
+
+  it("ne laisse pas le budget d'attaque s'éroder au fil des générations", async () => {
+    // `enforceBudget` réinvestit le mou à chaque vague fille : sans ce volet, le croisement et le
+    // retrait de monstres ne faisaient que soustraire, et la part du budget consacrée aux monstres
+    // décroissait génération après génération pendant que les routes s'allongeaient.
+    const attackBudget = 200;
+    const evolved = await evolveAttackWave(map, [], attackBudget, 50, [gobelin], 3, 15, 500);
+    expect(waveCost(evolved, [gobelin])).toBeGreaterThanOrEqual(attackBudget * 0.9);
   });
 
   it(

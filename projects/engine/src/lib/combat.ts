@@ -2,10 +2,11 @@ import type { GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } 
 import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexToWorld } from 'shared';
 import {
   PATH_CELL_COST,
+  type PathGeometry,
+  buildPathGeometry,
   expandPathCells,
   pathCellsCost,
-  pathLength,
-  pointAtDistance,
+  pointAtDistanceOn,
 } from './path';
 
 /** Candidat de ciblage : vue minimale d'un monstre utile au choix de la cible d'une tour. */
@@ -18,22 +19,31 @@ export interface TargetCandidate {
 }
 
 /**
- * Choisit la cible d'une tour parmi les monstres à portée : toujours le plus avancé.
- * `towerPosition` et les positions candidats sont en world-space.
+ * Choisit la cible d'une tour parmi les monstres à portée : toujours le plus avancé (le premier
+ * rencontré en cas d'égalité). `towerPosition` et les positions candidats sont en world-space.
+ *
+ * Une seule passe, sans tableau intermédiaire ni racine carrée (comparaison des carrés des
+ * distances) : appelée pour chaque tour à chaque tick de simulation, c'est l'une des boucles les
+ * plus chaudes du moteur.
  */
 export function selectTarget(
   towerPosition: GridCoord,
   towerRange: number,
   candidates: readonly TargetCandidate[],
 ): string | undefined {
-  const distanceToTower = (candidate: TargetCandidate) =>
-    Math.hypot(candidate.position.x - towerPosition.x, candidate.position.y - towerPosition.y);
-
-  const inRange = candidates.filter((candidate) => distanceToTower(candidate) <= towerRange);
-  if (inRange.length === 0) {
-    return undefined;
+  const rangeSquared = towerRange * towerRange;
+  let best: TargetCandidate | undefined;
+  for (const candidate of candidates) {
+    const dx = candidate.position.x - towerPosition.x;
+    const dy = candidate.position.y - towerPosition.y;
+    if (dx * dx + dy * dy > rangeSquared) {
+      continue;
+    }
+    if (!best || candidate.distance > best.distance) {
+      best = candidate;
+    }
   }
-  return inRange.reduce((a, b) => (b.distance > a.distance ? b : a)).id;
+  return best?.id;
 }
 
 /**
@@ -120,10 +130,25 @@ export type SimulationMode = 'defense' | 'attack';
 
 interface LaneState {
   path: MapPath;
+  /** Tracé précalculé de la voie : situer un monstre dessus ne redéveloppe plus son chemin (voir `PathGeometry`). */
+  geometry: PathGeometry;
   pathTotalLength: number;
   spawnQueue: string[];
   /** Progression continue vers le prochain spawn, en unités de `spawnThreshold` (voir `spawn()`). */
   spawnProgress: number;
+}
+
+/**
+ * Vue précalculée d'une tour pour la simulation : son type résolu et sa position en world-space.
+ * Résoudre le type (recherche dans le catalogue) et convertir la position à chaque tick, pour
+ * chaque tour, était pur gaspillage — ni l'un ni l'autre ne change de toute la simulation, les
+ * tours étant figées pendant l'épreuve. Les tours dont le type est introuvable au catalogue sont
+ * absentes de cette liste : elles ne tirent jamais, exactement comme avant.
+ */
+interface TowerState {
+  tower: TowerInstance;
+  type: TowerType;
+  worldPosition: GridCoord;
 }
 
 const DEFAULT_TICKS_BETWEEN_SPAWNS = 5;
@@ -151,6 +176,17 @@ export class DefenseSimulation {
   private shotsThisTick: ShotEvent[] = [];
   private breachCount = 0;
   private totalDamageDealt = 0;
+  /** Tours résolues une fois pour toutes (type + position world-space) — voir `TowerState`. */
+  private readonly towerStates: TowerState[];
+  /** Catalogue de monstres indexé par id : la simulation y accède plusieurs fois par monstre et par tick. */
+  private readonly monsterTypesById: Map<string, MonsterType>;
+  /** Catalogue de tours indexé par id, pour les mêmes raisons que `monsterTypesById`. */
+  private readonly towerTypesById: Map<string, TowerType>;
+  /**
+   * Positions world-space des monstres, mémorisées le temps d'un tick (voir `getMonsterPosition`).
+   * Vidé par `moveMonsters` — le seul endroit où une distance parcourue change.
+   */
+  private positionCache = new Map<string, GridCoord>();
 
   constructor(
     private readonly towers: readonly TowerInstance[],
@@ -161,12 +197,22 @@ export class DefenseSimulation {
     private readonly ticksBetweenSpawns: number = DEFAULT_TICKS_BETWEEN_SPAWNS,
     private readonly mode: SimulationMode = 'defense',
   ) {
-    this.lanes = wave.lanes.map((lane) => ({
-      path: lane.path,
-      pathTotalLength: pathLength(lane.path),
-      spawnQueue: lane.units.map((unit) => unit.type),
-      spawnProgress: 0,
-    }));
+    this.lanes = wave.lanes.map((lane) => {
+      const geometry = buildPathGeometry(lane.path);
+      return {
+        path: lane.path,
+        geometry,
+        pathTotalLength: geometry.totalLength,
+        spawnQueue: lane.units.map((unit) => unit.type),
+        spawnProgress: 0,
+      };
+    });
+    this.monsterTypesById = new Map(monsterCatalog.map((type) => [type.id, type]));
+    this.towerTypesById = new Map(towerCatalog.map((type) => [type.id, type]));
+    this.towerStates = towers.flatMap((tower) => {
+      const type = this.towerTypesById.get(tower.typeId);
+      return type ? [{ tower, type, worldPosition: hexToWorld(tower.position) }] : [];
+    });
     this.chateauHp = chateauMaxHp;
     for (const tower of towers) {
       this.towerCooldowns.set(tower.id, 0);
@@ -208,8 +254,27 @@ export class DefenseSimulation {
     return this.monsters;
   }
 
+  /**
+   * Position world-space d'un monstre le long de sa voie. Mémorisée jusqu'au prochain déplacement
+   * (`moveMonsters` vide le cache) : la position d'un monstre est demandée une fois par tour et par
+   * tick lors du ciblage, plus une fois par affichage, alors qu'elle ne change qu'entre deux ticks.
+   * Renvoie une copie, jamais l'entrée du cache elle-même — l'appelant reste libre de la conserver
+   * ou de la modifier, comme avec un calcul à chaque appel.
+   */
   getMonsterPosition(monster: MonsterInstance): GridCoord {
-    return pointAtDistance(this.lanes[monster.laneIndex].path, monster.distance);
+    const position = this.cachedPosition(monster);
+    return { x: position.x, y: position.y };
+  }
+
+  /** Position mémorisée d'un monstre, calculée à la demande — usage interne : ne pas modifier l'objet renvoyé. */
+  private cachedPosition(monster: MonsterInstance): GridCoord {
+    const cached = this.positionCache.get(monster.id);
+    if (cached) {
+      return cached;
+    }
+    const position = pointAtDistanceOn(this.lanes[monster.laneIndex].geometry, monster.distance);
+    this.positionCache.set(monster.id, position);
+    return position;
   }
 
   /** Tirs (tour → cible) survenus lors du dernier `step()`, pour l'affichage des projectiles. */
@@ -241,6 +306,12 @@ export class DefenseSimulation {
       towerCatalog: this.towerCatalog,
       ticksBetweenSpawns: this.ticksBetweenSpawns,
       mode: this.mode,
+      // Précalculs immuables (tours résolues, catalogues indexés) : partagés avec l'original plutôt
+      // que reconstruits. Le cache de positions, lui, suit l'état et doit être dupliqué.
+      towerStates: this.towerStates,
+      monsterTypesById: this.monsterTypesById,
+      towerTypesById: this.towerTypesById,
+      positionCache: new Map(this.positionCache),
     });
     return copy;
   }
@@ -275,7 +346,7 @@ export class DefenseSimulation {
   /** Régénération passive (ex. Nécrophage) : plafonnée aux PV max du type, appliquée avant les tirs du tick. */
   private regenerate(): void {
     for (const monster of this.monsters) {
-      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+      const type = this.monsterTypesById.get(monster.typeId);
       if (type?.regenPerTick) {
         monster.hp = Math.min(type.hp, monster.hp + type.regenPerTick);
       }
@@ -297,7 +368,7 @@ export class DefenseSimulation {
       if (lane.spawnQueue.length === 0) {
         continue;
       }
-      const nextType = this.monsterCatalog.find((candidate) => candidate.id === lane.spawnQueue[0]);
+      const nextType = this.monsterTypesById.get(lane.spawnQueue[0]);
       lane.spawnProgress +=
         nextType && nextType.speed > 0 ? nextType.speed : SPAWN_GAP_REFERENCE_SPEED;
       if (lane.spawnProgress < spawnThreshold) {
@@ -305,9 +376,7 @@ export class DefenseSimulation {
       }
       lane.spawnProgress -= spawnThreshold;
       const typeId = lane.spawnQueue.shift();
-      const type = typeId
-        ? this.monsterCatalog.find((candidate) => candidate.id === typeId)
-        : undefined;
+      const type = typeId ? this.monsterTypesById.get(typeId) : undefined;
       if (!type) {
         continue;
       }
@@ -323,35 +392,53 @@ export class DefenseSimulation {
     }
   }
 
+  /**
+   * Fait tirer chaque tour prête. Ni les positions ni la composition de `this.monsters` ne bougent
+   * pendant cette passe (les déplacements ont lieu dans `moveMonsters`, les morts ne sont résolues
+   * qu'à la fin) : la liste des cibles candidates et son index par id sont donc construits **une
+   * seule fois pour toutes les tours**, au lieu d'être reconstruits par chaque tour comme le
+   * faisait l'ancien `pickTarget` — un coût qui croissait en tours × monstres à chaque tick, et qui
+   * dominait le temps de recherche des deux IA.
+   *
+   * Un monstre déjà tombé à 0 PV pendant la passe reste ciblable par les tours suivantes du même
+   * tick, comme auparavant : le surplus compte dans `totalDamageDealt`.
+   */
   private fireTowers(): void {
-    for (const tower of this.towers) {
+    const candidates: TargetCandidate[] = this.monsters.map((monster) => ({
+      id: monster.id,
+      distance: monster.distance,
+      position: this.cachedPosition(monster),
+    }));
+    const monstersById = new Map(this.monsters.map((monster) => [monster.id, monster]));
+
+    for (const { tower, type: towerType, worldPosition } of this.towerStates) {
       const cooldown = this.towerCooldowns.get(tower.id) ?? 0;
       if (cooldown > 0) {
         this.towerCooldowns.set(tower.id, cooldown - 1);
         continue;
       }
-      const towerType = this.towerCatalog.find((candidate) => candidate.id === tower.typeId);
-      if (!towerType) {
-        continue;
-      }
-      const target = this.pickTarget(tower, towerType);
+      const targetId = selectTarget(worldPosition, towerType.range, candidates);
+      const target = targetId ? monstersById.get(targetId) : undefined;
       if (!target) {
         continue;
       }
+      const targetPos = this.cachedPosition(target);
       this.shotsThisTick.push({
         towerPosition: tower.position,
-        targetPosition: this.getMonsterPosition(target),
+        targetPosition: { x: targetPos.x, y: targetPos.y },
         splashRadius: towerType.splashRadius,
       });
       this.applyDamage(target, towerType);
       if (towerType.splashRadius) {
-        const targetPos = this.getMonsterPosition(target);
+        const splashSquared = towerType.splashRadius * towerType.splashRadius;
         for (const monster of this.monsters) {
           if (monster.id === target.id) {
             continue;
           }
-          const pos = this.getMonsterPosition(monster);
-          if (Math.hypot(pos.x - targetPos.x, pos.y - targetPos.y) <= towerType.splashRadius) {
+          const pos = this.cachedPosition(monster);
+          const dx = pos.x - targetPos.x;
+          const dy = pos.y - targetPos.y;
+          if (dx * dx + dy * dy <= splashSquared) {
             this.applyDamage(monster, towerType);
           }
         }
@@ -370,9 +457,9 @@ export class DefenseSimulation {
         survivors.push(monster);
         continue;
       }
-      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+      const type = this.monsterTypesById.get(monster.typeId);
       const childType = type?.splitOnDeath
-        ? this.monsterCatalog.find((candidate) => candidate.id === type.splitOnDeath!.typeId)
+        ? this.monsterTypesById.get(type.splitOnDeath.typeId)
         : undefined;
       if (type?.splitOnDeath && childType) {
         for (let i = 0; i < type.splitOnDeath.count; i++) {
@@ -392,7 +479,7 @@ export class DefenseSimulation {
   }
 
   private applyDamage(monster: MonsterInstance, towerType: TowerType): void {
-    const monsterType = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+    const monsterType = this.monsterTypesById.get(monster.typeId);
     const armorMultiplier = towerType.armorBonus && monsterType?.armored ? towerType.armorBonus : 1;
     const damage = towerType.damage * armorMultiplier;
     monster.hp -= damage;
@@ -407,19 +494,9 @@ export class DefenseSimulation {
     }
   }
 
-  private pickTarget(tower: TowerInstance, towerType: TowerType): MonsterInstance | undefined {
-    const candidates: TargetCandidate[] = this.monsters.map((monster) => ({
-      id: monster.id,
-      distance: monster.distance,
-      position: this.getMonsterPosition(monster),
-    }));
-    const targetId = selectTarget(hexToWorld(tower.position), towerType.range, candidates);
-    return this.monsters.find((monster) => monster.id === targetId);
-  }
-
   private moveMonsters(): void {
     for (const monster of this.monsters) {
-      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
+      const type = this.monsterTypesById.get(monster.typeId);
       if (!type) {
         continue;
       }
@@ -427,17 +504,19 @@ export class DefenseSimulation {
       monster.distance += type.speed * multiplier;
     }
 
-    const arrived = this.monsters.filter(
-      (monster) => monster.distance >= this.lanes[monster.laneIndex].pathTotalLength,
-    );
-    this.breachCount += arrived.length;
-    for (const monster of arrived) {
-      const type = this.monsterCatalog.find((candidate) => candidate.id === monster.typeId);
-      this.chateauHp -= type?.chateauDamage ?? 0;
+    const remaining: MonsterInstance[] = [];
+    for (const monster of this.monsters) {
+      if (monster.distance < this.lanes[monster.laneIndex].pathTotalLength) {
+        remaining.push(monster);
+        continue;
+      }
+      this.breachCount++;
+      this.chateauHp -= this.monsterTypesById.get(monster.typeId)?.chateauDamage ?? 0;
     }
-    this.monsters = this.monsters.filter(
-      (monster) => monster.distance < this.lanes[monster.laneIndex].pathTotalLength,
-    );
+    this.monsters = remaining;
+
+    // Seul endroit où une distance parcourue change : les positions mémorisées deviennent caduques.
+    this.positionCache.clear();
   }
 
   private resolveOutcome(): void {

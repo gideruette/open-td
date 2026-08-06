@@ -1,24 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <radialGradient id="skin" cx="35%" cy="28%" r="70%">
-      <stop offset="0%" stop-color="#9fe07a"/>
-      <stop offset="100%" stop-color="#3a5c22"/>
-    </radialGradient>
-    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.25"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="skin" x1="25%" y1="0%" x2="75%" y2="100%">
+      <stop offset="0%" stop-color="#a8e884"/>
+      <stop offset="55%" stop-color="#69a844"/>
+      <stop offset="100%" stop-color="#2c4a1a"/>
+    </linearGradient>
+    <linearGradient id="rag" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#8a6a3a"/>
+      <stop offset="100%" stop-color="#42301a"/>
+    </linearGradient>
   </defs>
-  <polygon points="10,24 22,14 22,30" fill="#5c8a3a" stroke="#2a3a1a" stroke-width="1.5"/>
-  <polygon points="54,24 42,14 42,30" fill="#5c8a3a" stroke="#2a3a1a" stroke-width="1.5"/>
-  <circle cx="32" cy="34" r="22" fill="url(#skin)" stroke="#2a3a1a" stroke-width="1.5"/>
-  <circle cx="32" cy="34" r="22" fill="url(#gloss)"/>
-  <path d="M18 46 Q32 30 46 46" fill="#274012" opacity="0.4"/>
-  <circle cx="24" cy="32" r="4.2" fill="#1a1a1a"/>
-  <circle cx="40" cy="32" r="4.2" fill="#1a1a1a"/>
-  <circle cx="22.6" cy="30.6" r="1.1" fill="#e8ffcf"/>
-  <circle cx="38.6" cy="30.6" r="1.1" fill="#e8ffcf"/>
-  <path d="M21 45 Q32 52 43 45" stroke="#1c2a10" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <polygon points="24,45.5 22,49 26,47" fill="#f4f0e0"/>
-  <polygon points="40,45.5 42,49 38,47" fill="#f4f0e0"/>
+  <!-- Dague brandie : casse la silhouette et se lit même en tout petit. -->
+  <path d="M45 33 L51 17" stroke="#4a3a26" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M47 22 L55 19" stroke="#4a3a26" stroke-width="1.8" stroke-linecap="round"/>
+  <polygon points="52,4 55,19 48,19" fill="#d7dee6" stroke="#7f8894" stroke-width="0.9"/>
+  <!-- Jambes arquées, pieds nus écartés -->
+  <path d="M28 42 L24 51" stroke="#3f6b28" stroke-width="5.4" stroke-linecap="round"/>
+  <path d="M37 42 L41 51" stroke="#4e8232" stroke-width="5.4" stroke-linecap="round"/>
+  <path d="M24 50 L18 55 L27 55 Z" fill="#3a5c22"/>
+  <path d="M41 50 L38 55 L47 55 Z" fill="#446c28"/>
+  <!-- Bras : un ballant, un tendu vers la dague -->
+  <path d="M24 32 L17 41" stroke="#4e8232" stroke-width="4.4" stroke-linecap="round"/>
+  <path d="M41 31 L46 34" stroke="#5c9639" stroke-width="4.4" stroke-linecap="round"/>
+  <!-- Torse maigre, épaules voûtées -->
+  <path
+    d="M24 30 C25 26 39 26 41 30 L43 42 C36 45 28 45 22 42 Z"
+    fill="url(#skin)"
+    stroke="#25401a"
+    stroke-width="1.4"
+  />
+  <path d="M23 39 L43 39 L41 46 L25 46 Z" fill="url(#rag)" stroke="#25401a" stroke-width="1.1"/>
+  <!-- Grandes oreilles pointues : le trait le plus reconnaissable du gobelin -->
+  <path d="M22 18 L5 11 L20 26 Z" fill="#5c8a3a" stroke="#25401a" stroke-width="1.3"/>
+  <path d="M42 18 L59 11 L44 26 Z" fill="#5c8a3a" stroke="#25401a" stroke-width="1.3"/>
+  <!-- Tête : crâne fuyant, mâchoire étroite -->
+  <path
+    d="M32 8 C40 8 44 13 44 19 C44 25 38 30 32 30 C26 30 20 25 20 19 C20 13 24 8 32 8 Z"
+    fill="url(#skin)"
+    stroke="#25401a"
+    stroke-width="1.4"
+  />
+  <!-- Arcade sourcilière lourde : le regard n'est plus une paire de gros points -->
+  <path d="M22 17 C26 14 38 14 42 17 L41 19 C37 17 27 17 23 19 Z" fill="#25401a" opacity="0.75"/>
+  <path d="M24 20 L29.5 21.5 L24 23 Z" fill="#ffd24a"/>
+  <path d="M40 20 L34.5 21.5 L40 23 Z" fill="#ffd24a"/>
+  <circle cx="26.4" cy="21.5" r="0.9" fill="#141208"/>
+  <circle cx="37.6" cy="21.5" r="0.9" fill="#141208"/>
+  <!-- Nez crochu -->
+  <path d="M32 21 L34.5 26 L30 26 Z" fill="#5c8a3a" stroke="#25401a" stroke-width="0.7"/>
+  <!-- Rictus en dents de scie (pas un sourire), fermé par deux crocs symétriques aux commissures -->
+  <path
+    d="M26 26.6 L28.5 25.4 L31 26.8 L33.5 25.4 L36 26.6 L38 25.6"
+    fill="none"
+    stroke="#1c2a10"
+    stroke-width="1.3"
+    stroke-linecap="round"
+  />
+  <path d="M27.4 26.8 L28.4 29.4 L29.4 26.8 Z" fill="#f4f0e0"/>
+  <path d="M34.6 26.8 L35.6 29.4 L36.6 26.8 Z" fill="#f4f0e0"/>
 </svg>

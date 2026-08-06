@@ -1,6 +1,6 @@
 import type { GameMap, GridCoord, MapPath, MapSpawn, TowerInstance } from 'shared';
 import { hexDistance, hexLinedraw, hexNeighbors, hexToWorld } from 'shared';
-import { findTowerAt, isChateauCell, isRiverCell, isWithinGrid } from './fortress';
+import { cellKey, isChateauCell, isRiverCell, isWithinGrid, riverCells, towerCells } from './fortress';
 
 function segmentLength(a: GridCoord, b: GridCoord): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
@@ -24,43 +24,82 @@ export function expandPathCells(path: MapPath): GridCoord[] {
   return cells;
 }
 
-function cellWorldCenters(path: MapPath): GridCoord[] {
-  return expandPathCells(path).map((cell) => hexToWorld(cell));
+/**
+ * Tracé d'un chemin sous la forme directement exploitable pour situer un point le long de lui :
+ * les centres world-space des cases traversées, et la distance parcourue depuis le spawn jusqu'à
+ * chacun d'eux. Se calcule une fois (`buildPathGeometry`, qui développe le chemin en cases puis les
+ * convertit en world-space — de loin la partie coûteuse) et se réutilise ensuite à volonté
+ * (`pointAtDistanceOn`). C'est ce qui permet à `DefenseSimulation` de situer des dizaines de
+ * monstres à chaque tick sans redévelopper leur chemin à chaque fois.
+ */
+export interface PathGeometry {
+  /** Centres world-space des cases traversées, du spawn au château. */
+  centers: readonly GridCoord[];
+  /** `cumulative[i]` = distance du spawn jusqu'à `centers[i]` ; croissante, `cumulative[0] === 0`. */
+  cumulative: readonly number[];
+  /** Longueur totale du chemin (dernière valeur de `cumulative`, 0 pour un chemin réduit à un point). */
+  totalLength: number;
 }
 
-/** Longueur totale d'un chemin (somme des segments entre centres hex voisins). */
-export function pathLength(path: MapPath): number {
-  const centers = cellWorldCenters(path);
-  let total = 0;
+/** Précalcule la géométrie d'un chemin — voir `PathGeometry`. */
+export function buildPathGeometry(path: MapPath): PathGeometry {
+  const centers = expandPathCells(path).map((cell) => hexToWorld(cell));
+  const cumulative: number[] = centers.length > 0 ? [0] : [];
   for (let i = 1; i < centers.length; i++) {
-    total += segmentLength(centers[i - 1], centers[i]);
+    cumulative.push(cumulative[i - 1] + segmentLength(centers[i - 1], centers[i]));
   }
-  return total;
+  return { centers, cumulative, totalLength: cumulative[cumulative.length - 1] ?? 0 };
 }
 
-/** Position interpolée le long du chemin à la distance parcourue donnée (clampée aux extrémités), en world-space. */
-export function pointAtDistance(path: MapPath, distance: number): GridCoord {
-  const centers = cellWorldCenters(path);
+/**
+ * Position interpolée le long d'un chemin précalculé à la distance parcourue donnée (clampée aux
+ * extrémités), en world-space. Le segment porteur est trouvé par dichotomie sur les distances
+ * cumulées plutôt qu'en parcourant le chemin depuis le spawn : le coût ne dépend plus de l'avancée
+ * du monstre le long de sa route.
+ */
+export function pointAtDistanceOn(geometry: PathGeometry, distance: number): GridCoord {
+  const { centers, cumulative } = geometry;
   if (centers.length === 0) {
     return { x: 0, y: 0 };
   }
   if (distance <= 0) {
     return centers[0];
   }
-
-  let remaining = distance;
-  for (let i = 1; i < centers.length; i++) {
-    const from = centers[i - 1];
-    const to = centers[i];
-    const segLen = segmentLength(from, to);
-    if (remaining <= segLen) {
-      const t = segLen === 0 ? 0 : remaining / segLen;
-      return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
-    }
-    remaining -= segLen;
+  if (distance >= geometry.totalLength) {
+    return centers[centers.length - 1];
   }
 
-  return centers[centers.length - 1];
+  // Plus grand `low` tel que `cumulative[low] <= distance` : le segment [low, low + 1] porte le point.
+  let low = 0;
+  let high = centers.length - 1;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (cumulative[mid] <= distance) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  const from = centers[low];
+  const to = centers[low + 1];
+  const segLen = cumulative[low + 1] - cumulative[low];
+  const t = segLen === 0 ? 0 : (distance - cumulative[low]) / segLen;
+  return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+}
+
+/** Longueur totale d'un chemin (somme des segments entre centres hex voisins). */
+export function pathLength(path: MapPath): number {
+  return buildPathGeometry(path).totalLength;
+}
+
+/**
+ * Position interpolée le long du chemin à la distance parcourue donnée (clampée aux extrémités),
+ * en world-space. Redéveloppe le chemin à chaque appel : pour situer répétitivement des points sur
+ * un même chemin, précalculer sa géométrie (`buildPathGeometry`) et passer par `pointAtDistanceOn`.
+ */
+export function pointAtDistance(path: MapPath, distance: number): GridCoord {
+  return pointAtDistanceOn(buildPathGeometry(path), distance);
 }
 
 export function isSpawnCell(map: GameMap, coord: GridCoord): boolean {
@@ -178,10 +217,6 @@ export function isValidPathStep(
   return !towers.some((tower) => tower.position.x === to.x && tower.position.y === to.y);
 }
 
-function cellKey(coord: GridCoord): string {
-  return `${coord.x},${coord.y}`;
-}
-
 /**
  * Simplifie une liste ordonnée de cases en supprimant les boucles : dès qu'une case déjà
  * traversée réapparaît plus loin, les cases intermédiaires (la boucle) sont retirées et le tracé
@@ -220,30 +255,38 @@ export function shortestPath(
   from: GridCoord,
   to: GridCoord,
 ): GridCoord[] | undefined {
-  if (cellKey(from) === cellKey(to)) {
+  const fromKey = cellKey(from);
+  const toKey = cellKey(to);
+  if (fromKey === toKey) {
     return [];
   }
 
-  const visited = new Set<string>([cellKey(from)]);
-  const previous = new Map<string, GridCoord>();
-  const queue: GridCoord[] = [from];
+  // Obstacles indexés plutôt que testés un à un : `isRiverCell` redéveloppait les rivières en cases
+  // à chaque appel et `findTowerAt` reparcourait toutes les tours. Les deux index sont mémoïsés par
+  // carte et par tableau de tours, donc construits une fois pour toute une recherche d'IA.
+  const rivers = riverCells(map);
+  const occupied = towerCells(towers);
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  const visited = new Set<string>([fromKey]);
+  const previous = new Map<string, GridCoord>();
+  // File FIFO parcourue par curseur : `Array.shift()` est en O(n), ce qui rendait le BFS quadratique.
+  const queue: GridCoord[] = [from];
+  for (let head = 0; head < queue.length; head++) {
+    const current = queue[head];
     for (const neighbor of hexNeighbors(current)) {
-      if (!isWithinGrid(map, neighbor) || findTowerAt(towers, neighbor) || isRiverCell(map, neighbor)) {
+      if (!isWithinGrid(map, neighbor)) {
         continue;
       }
       const neighborKey = cellKey(neighbor);
-      if (visited.has(neighborKey)) {
+      if (visited.has(neighborKey) || occupied.has(neighborKey) || rivers.has(neighborKey)) {
         continue;
       }
       visited.add(neighborKey);
       previous.set(neighborKey, current);
-      if (neighborKey === cellKey(to)) {
+      if (neighborKey === toKey) {
         const path: GridCoord[] = [neighbor];
         let step = current;
-        while (cellKey(step) !== cellKey(from)) {
+        while (cellKey(step) !== fromKey) {
           path.unshift(step);
           step = previous.get(cellKey(step))!;
         }

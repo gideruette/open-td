@@ -1,29 +1,59 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <radialGradient id="skin" cx="35%" cy="26%" r="72%">
+    <linearGradient id="hide" x1="25%" y1="0%" x2="75%" y2="100%">
       <stop offset="0%" stop-color="#d8f2fa"/>
-      <stop offset="100%" stop-color="#3a6a82"/>
-    </radialGradient>
-    <radialGradient id="gloss" cx="35%" cy="22%" r="55%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#bdefff"/>
-      <stop offset="100%" stop-color="#2a7ca8"/>
-    </radialGradient>
+      <stop offset="50%" stop-color="#7fb6cf"/>
+      <stop offset="100%" stop-color="#2c5468"/>
+    </linearGradient>
+    <linearGradient id="shard" x1="0%" y1="100%" x2="30%" y2="0%">
+      <stop offset="0%" stop-color="#7fd4ee"/>
+      <stop offset="100%" stop-color="#eafaff"/>
+    </linearGradient>
   </defs>
-  <polygon points="8,20 20,8 18,26" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="1.2"/>
-  <polygon points="56,20 44,8 46,26" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="1.2"/>
-  <circle cx="32" cy="34" r="26" fill="url(#skin)" stroke="#20404e" stroke-width="1.8"/>
-  <circle cx="32" cy="34" r="26" fill="url(#gloss)"/>
-  <path d="M16 24 Q32 16 48 24 L44 28 Q32 22 20 28 Z" fill="#20404e" opacity="0.4"/>
-  <circle cx="23" cy="31" r="4.6" fill="url(#glow)"/>
-  <circle cx="41" cy="31" r="4.6" fill="url(#glow)"/>
-  <circle cx="23" cy="31" r="1.8" fill="#0e2028"/>
-  <circle cx="41" cy="31" r="1.8" fill="#0e2028"/>
-  <path d="M20 44 Q32 50 44 44" stroke="#20404e" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <polygon points="24,46 20,56 27,48" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
-  <polygon points="40,46 44,56 37,48" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
-  <polygon points="32,4 34,12 30,12" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="0.8"/>
+  <!-- Stalagmites de glace plantées dans le dos : lues comme une crête, pas comme des oreilles -->
+  <path d="M18 28 L13 6 L24 24 Z" fill="url(#shard)" stroke="#2a4c5c" stroke-width="1.1"/>
+  <path d="M46 28 L52 9 L41 24 Z" fill="url(#shard)" stroke="#2a4c5c" stroke-width="1.1"/>
+  <path d="M32 22 L34 4 L37 22 Z" fill="url(#shard)" stroke="#2a4c5c" stroke-width="1" opacity="0.9"/>
+  <!-- Jambes colonnes -->
+  <path d="M26 45 L24 53" stroke="#4a7f96" stroke-width="8.5" stroke-linecap="round"/>
+  <path d="M40 45 L42 53" stroke="#5c93aa" stroke-width="8.5" stroke-linecap="round"/>
+  <path d="M24 52 L16 58 L30 58 Z" fill="#2c5468"/>
+  <path d="M42 52 L36 58 L50 58 Z" fill="#35617a"/>
+  <!-- Bras lourds, poings gelés -->
+  <path d="M16 30 L11 44" stroke="#6ba5bd" stroke-width="7.5" stroke-linecap="round"/>
+  <path d="M48 30 L53 44" stroke="#7cb4cb" stroke-width="7.5" stroke-linecap="round"/>
+  <path d="M7 44 L15 42 L14 50 L8 50 Z" fill="#bfe6f2" stroke="#2a4c5c" stroke-width="1.2"/>
+  <path d="M57 44 L49 42 L50 50 L56 50 Z" fill="#cfeef8" stroke="#2a4c5c" stroke-width="1.2"/>
+  <!-- Torse voûté, plaques de givre -->
+  <path
+    d="M15 28 C19 19 45 19 49 28 L46 43 C38 48 26 48 18 43 Z"
+    fill="url(#hide)"
+    stroke="#20404e"
+    stroke-width="1.7"
+  />
+  <g fill="#eafaff" opacity="0.55">
+    <path d="M20 30 L27 28 L25 35 L19 35 Z"/>
+    <path d="M38 32 L45 31 L44 38 L38 38 Z"/>
+  </g>
+  <!-- Tête basse, front bombé -->
+  <path
+    d="M32 9 C39 9 43 13 43 18 C43 23 38 26 32 26 C26 26 21 23 21 18 C21 13 25 9 32 9 Z"
+    fill="url(#hide)"
+    stroke="#20404e"
+    stroke-width="1.5"
+  />
+  <path d="M22.5 17.5 L30 19.6 L29.5 21.8 L23 20 Z" fill="#20404e" opacity="0.8"/>
+  <path d="M41.5 17.5 L34 19.6 L34.5 21.8 L41 20 Z" fill="#20404e" opacity="0.8"/>
+  <!-- Yeux luisants, très étroits -->
+  <path d="M24 20 L29 21 L24 22.6 Z" fill="#bdefff"/>
+  <path d="M40 20 L35 21 L40 22.6 Z" fill="#bdefff"/>
+  <!-- Défenses de glace : pointes maintenues sous les yeux (y ≈ 23) pour dégager le regard. -->
+  <path d="M26 24 C29 26.5 35 26.5 38 24 L37 26.5 C34 28 30 28 27 26.5 Z" fill="#12303c"/>
+  <path d="M27.5 26.4 L23.5 23.2 L30 24.8 Z" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
+  <path d="M36.5 26.4 L40.5 23.2 L34 24.8 Z" fill="#eefaff" stroke="#a8d8e8" stroke-width="0.6"/>
+  <!-- Souffle glacé -->
+  <g fill="#eafaff" opacity="0.6">
+    <circle cx="10" cy="24" r="1.4"/>
+    <circle cx="55" cy="22" r="1.1"/>
+  </g>
 </svg>

@@ -53,6 +53,26 @@ function borderCells(map: GameMap): GridCoord[] {
   return cells;
 }
 
+/** Types de monstres réellement achetables par l'attaquant : le catalogue moins les types internes (progéniture d'une scission, jamais composée à la main). */
+function buyableMonsters(monsterCatalog: readonly MonsterType[]): readonly MonsterType[] {
+  return monsterCatalog.filter((type) => !type.internal);
+}
+
+/** Un élément tiré au hasard, ou `undefined` si la liste est vide — dispense les appelants du garde-fou sur la liste vide. */
+function pickRandom<T>(items: readonly T[]): T | undefined {
+  return items.length === 0 ? undefined : items[Math.floor(Math.random() * items.length)];
+}
+
+/** Coût d'une unité composée (0 si son type ne figure pas au catalogue). */
+function unitCost(typeId: string, monsterCatalog: readonly MonsterType[]): number {
+  return monsterCatalog.find((candidate) => candidate.id === typeId)?.cost ?? 0;
+}
+
+/** Copie profonde des voies d'une vague (chemins partagés, files dupliquées) : base de tout opérateur qui modifie une file sans toucher à la vague d'origine. */
+function cloneLanes(wave: Wave): WaveLane[] {
+  return wave.lanes.map((lane) => ({ ...lane, units: [...lane.units] }));
+}
+
 /**
  * Borne le nombre de voies qu'il vaut la peine de générer : au-delà, une voie de plus n'aurait
  * même pas de quoi payer le moins cher des monstres une fois son propre coût de chemin déduit
@@ -67,7 +87,7 @@ function affordableLaneCap(
   attackBudget: number,
   monsterCatalog: readonly MonsterType[],
 ): number {
-  const buyable = monsterCatalog.filter((type) => !type.internal);
+  const buyable = buyableMonsters(monsterCatalog);
   const borders = borderCells(map);
   if (buyable.length === 0 || borders.length === 0) {
     return 1;
@@ -147,7 +167,7 @@ export function initRandomQueues(
   attackBudget: number,
   monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
 ): WaveLane[] {
-  const buyable = monsterCatalog.filter((type) => !type.internal);
+  const buyable = buyableMonsters(monsterCatalog);
   const lanes: WaveLane[] = routes.map((path) => ({ path, units: [] }));
   if (lanes.length === 0) {
     return lanes;
@@ -429,20 +449,244 @@ function removeRandomLane(wave: Wave): Wave {
 }
 
 /**
+ * Contexte passé à chaque opérateur de mutation (voir `WAVE_MUTATIONS`) : la vague à muter et tout
+ * ce dont un opérateur peut avoir besoin pour tracer une route ou tarifer un monstre.
+ */
+interface MutationContext {
+  wave: Wave;
+  map: GameMap;
+  towers: readonly TowerInstance[];
+  attackBudget: number;
+  monsterCatalog: readonly MonsterType[];
+}
+
+/** Un opérateur de mutation : la vague altérée, ou `undefined` s'il ne s'applique pas à cette vague (voie sans monstre, route résultante invalide…) — l'appelant garde alors la vague inchangée. */
+type MutationOperator = (context: MutationContext) => Wave | undefined;
+
+/** Indices des voies garnies d'au moins un monstre : seules cibles possibles des opérateurs de composition. */
+function lanesWithUnits(wave: Wave): number[] {
+  return wave.lanes.flatMap((lane, index) => (lane.units.length > 0 ? [index] : []));
+}
+
+// --- Opérateurs de tracé ----------------------------------------------------
+
+/** Re-trace entièrement une voie tirée au hasard (nouvelle route aléatoire avec détours, `initRandomRoute`, en évitant les chemins des autres voies). */
+const retraceRandomLane: MutationOperator = ({ wave, map, towers }) => {
+  const laneIndex = Math.floor(Math.random() * wave.lanes.length);
+  const otherPaths = wave.lanes.filter((_, i) => i !== laneIndex).map((lane) => lane.path);
+  const route = initRandomRoute(map, towers, otherPaths);
+  if (!route) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  lanes[laneIndex] = { ...lanes[laneIndex], path: route };
+  return { lanes };
+};
+
+/** Retire un point du chemin d'une voie tirée au hasard (`removeRandomWaypoint`) — variation de tracé plus locale que le re-tracé complet. */
+const dropRandomWaypoint: MutationOperator = ({ wave, map, towers }) => {
+  const laneIndex = Math.floor(Math.random() * wave.lanes.length);
+  const route = removeRandomWaypoint(map, towers, wave.lanes[laneIndex].path);
+  if (!route) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  lanes[laneIndex] = { ...lanes[laneIndex], path: route };
+  return { lanes };
+};
+
+/** Ajoute une voie entièrement nouvelle (`addRandomLane`). */
+const appendRandomLane: MutationOperator = ({ wave, map, towers, attackBudget, monsterCatalog }) =>
+  addRandomLane(wave, map, towers, attackBudget, monsterCatalog);
+
+/** Retire une voie tirée au hasard (`removeRandomLane`). */
+const dropRandomLane: MutationOperator = ({ wave }) => removeRandomLane(wave);
+
+// --- Opérateurs de composition ----------------------------------------------
+
+/**
+ * Remplace le type d'un monstre tiré au hasard par un autre type achetable, tout le reste de la
+ * vague inchangé : l'opérateur qui donne enfin à la recherche un moyen de découvrir les contres du
+ * catalogue (blindage face à des tours sans bonus anti-armure, résistance au ralentissement face à
+ * la tour Glace, régénération face à une défense sans burst, scission qui double la file à la
+ * mort). Un échange à la fois — la sélection tranche ensuite si l'échange valait le coup, ce qu'une
+ * régénération complète de la file (`rerollRandomLaneQueue`) ne permet jamais d'attribuer à un
+ * monstre en particulier.
+ *
+ * Le type de remplacement est tiré parmi ceux que le budget permet réellement de payer *à la place*
+ * de l'unité échangée (son coût, plus le mou de la vague). Sans ce plafond, échanger un Rat contre
+ * un Chevalier noir ferait sortir la vague du budget et `enforceBudget` retirerait des monstres au
+ * hasard juste après — potentiellement celui qu'on vient de poser : la mutation se réduirait à du
+ * bruit au lieu d'un pas de recherche.
+ */
+const swapRandomUnitType: MutationOperator = ({ wave, attackBudget, monsterCatalog }) => {
+  const laneIndex = pickRandom(lanesWithUnits(wave));
+  if (laneIndex === undefined) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  const unitIndex = Math.floor(Math.random() * lanes[laneIndex].units.length);
+  const replaced = lanes[laneIndex].units[unitIndex].type;
+  const ceiling =
+    unitCost(replaced, monsterCatalog) + attackBudget - waveCost(wave, monsterCatalog);
+  const replacement = pickRandom(
+    buyableMonsters(monsterCatalog).filter(
+      (type) => type.id !== replaced && type.cost <= ceiling,
+    ),
+  );
+  if (!replacement) {
+    return undefined;
+  }
+  lanes[laneIndex].units[unitIndex] = { type: replacement.id };
+  return { lanes };
+};
+
+/**
+ * Retire un monstre tiré au hasard. Contrairement au retrait de `enforceBudget`, qui ne s'active
+ * qu'en dépassement de budget, celui-ci libère volontairement du budget : le réinvestissement de
+ * `enforceBudget`, appelé juste après, le redépense ailleurs. C'est le mécanisme par lequel une
+ * vague peut se déplacer vers des monstres plus chers — un simple échange (`swapRandomUnitType`)
+ * reste plafonné par le mou disponible et ne le pourrait pas seul sur une vague au budget serré.
+ */
+const removeRandomUnit: MutationOperator = ({ wave }) => {
+  const laneIndex = pickRandom(lanesWithUnits(wave));
+  if (laneIndex === undefined) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  lanes[laneIndex].units.splice(Math.floor(Math.random() * lanes[laneIndex].units.length), 1);
+  return { lanes };
+};
+
+/**
+ * Déplace un monstre tiré au hasard d'une voie vers une autre, à une place tirée au hasard.
+ * Neutre pour le budget (un monstre coûte le même prix quelle que soit sa voie, les tracés ne
+ * bougent pas) : c'est purement de la répartition de la pression entre les voies, que ni le
+ * croisement — qui recopie les files voie par voie — ni les autres opérateurs ne produisent.
+ * `undefined` s'il n'y a pas au moins deux voies.
+ */
+const moveRandomUnit: MutationOperator = ({ wave }) => {
+  const fromIndex = pickRandom(lanesWithUnits(wave));
+  if (fromIndex === undefined) {
+    return undefined;
+  }
+  const toIndex = pickRandom(wave.lanes.map((_, i) => i).filter((i) => i !== fromIndex));
+  if (toIndex === undefined) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  const [unit] = lanes[fromIndex].units.splice(
+    Math.floor(Math.random() * lanes[fromIndex].units.length),
+    1,
+  );
+  lanes[toIndex].units.splice(
+    Math.floor(Math.random() * (lanes[toIndex].units.length + 1)),
+    0,
+    unit,
+  );
+  return { lanes };
+};
+
+/**
+ * Déplace un monstre tiré au hasard à une autre place de sa propre file. Ni le coût, ni les
+ * tracés, ni la répartition entre voies ne changent — seul l'ordre de spawn, qui n'est pas
+ * cosmétique : `DefenseSimulation.spawn()` fait avancer la progression de spawn d'une voie à la
+ * vitesse du monstre **en tête de file**, si bien qu'une file qui groupe ses unités rapides les
+ * fait sortir plus densément (effet de masse) qu'une file qui les disperse entre des unités lentes.
+ * Aucun autre opérateur ne fait varier l'ordre à composition constante. `undefined` si aucune voie
+ * n'a au moins deux monstres (rien à réordonner).
+ */
+const shiftRandomUnit: MutationOperator = ({ wave }) => {
+  const laneIndex = pickRandom(
+    lanesWithUnits(wave).filter((index) => wave.lanes[index].units.length >= 2),
+  );
+  if (laneIndex === undefined) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  const units = lanes[laneIndex].units;
+  const [unit] = units.splice(Math.floor(Math.random() * units.length), 1);
+  units.splice(Math.floor(Math.random() * (units.length + 1)), 0, unit);
+  return { lanes };
+};
+
+/**
+ * Régénère entièrement la file d'une voie tirée au hasard pour le budget qu'elle consommait
+ * (`initRandomQueues`) — le seul opérateur de composition d'origine, conservé à faible poids comme
+ * échappatoire : les opérateurs fins ci-dessus progressent par petits pas et peuvent s'enliser dans
+ * un optimum local, un tirage complet en ressort d'un coup.
+ */
+const rerollRandomLaneQueue: MutationOperator = ({ wave, monsterCatalog }) => {
+  const laneIndex = pickRandom(lanesWithUnits(wave));
+  if (laneIndex === undefined) {
+    return undefined;
+  }
+  const lanes = cloneLanes(wave);
+  const laneBudget = lanes[laneIndex].units.reduce(
+    (total, unit) => total + unitCost(unit.type, monsterCatalog),
+    0,
+  );
+  const [rerolled] = initRandomQueues([lanes[laneIndex].path], laneBudget, monsterCatalog);
+  lanes[laneIndex] = rerolled;
+  return { lanes };
+};
+
+/**
+ * Les opérateurs de mutation et leur poids relatif. Deux familles se partagent la masse : le
+ * **tracé** (4/10) et la **composition** (6/10).
+ *
+ * Cette répartition est le correctif d'un déséquilibre de fond : quatre des cinq mutations
+ * d'origine portaient sur les routes, la cinquième régénérait une file de monstres au hasard — et
+ * le croisement, lui, mélange bel et bien les tracés (`blendRoutes`) mais recopie les files telles
+ * quelles depuis un parent. La composition n'avait donc aucun opérateur *local* : elle ne pouvait
+ * pas s'améliorer par petits pas cumulés, seulement être tirée au sort puis conservée ou détruite.
+ * La recherche ne pouvait pas découvrir les contres du catalogue, et discriminait les vagues bien
+ * plus par leur tracé que par leurs monstres. Les six opérateurs de composition ci-dessus lui
+ * rendent cette montée de gradient ; `swapRandomUnitType` pèse double parce que c'est celui qui
+ * porte directement la question « quel monstre contre cette forteresse ».
+ *
+ * Le poids ne dit rien de la probabilité de muter, seulement du choix de l'opérateur une fois la
+ * mutation décidée (`MUTATION_RATE`) : une seule mutation est appliquée à la fois, jamais plusieurs.
+ */
+const WAVE_MUTATIONS: readonly { weight: number; apply: MutationOperator }[] = [
+  { weight: 1, apply: retraceRandomLane },
+  { weight: 1, apply: dropRandomWaypoint },
+  { weight: 1, apply: appendRandomLane },
+  { weight: 1, apply: dropRandomLane },
+  { weight: 2, apply: swapRandomUnitType },
+  { weight: 1, apply: removeRandomUnit },
+  { weight: 1, apply: moveRandomUnit },
+  { weight: 1, apply: shiftRandomUnit },
+  { weight: 1, apply: rerollRandomLaneQueue },
+];
+
+/** Tire un opérateur de `WAVE_MUTATIONS` proportionnellement à son poids. */
+function pickMutation(): MutationOperator {
+  const total = WAVE_MUTATIONS.reduce((sum, mutation) => sum + mutation.weight, 0);
+  let roll = Math.random() * total;
+  for (const mutation of WAVE_MUTATIONS) {
+    roll -= mutation.weight;
+    if (roll < 0) {
+      return mutation.apply;
+    }
+  }
+  return WAVE_MUTATIONS[WAVE_MUTATIONS.length - 1].apply;
+}
+
+/**
  * Mute une vague fille pour réintroduire de la diversité que le seul croisement ne peut pas
  * produire (il ne fait que recombiner les chemins/files déjà présents dans la population) : avec
- * probabilité `MUTATION_RATE`, altère au hasard la vague d'une seule de ces cinq façons — jamais
- * plusieurs à la fois : re-tracé complet d'une voie tirée au hasard (nouvelle route aléatoire avec
- * détours, `initRandomRoute`, en évitant les chemins des autres voies), retrait d'un point du
- * chemin d'une voie tirée au hasard (`removeRandomWaypoint`, variation plus locale), régénération
- * de la file de monstres d'une voie tirée au hasard pour le même budget qu'elle consommait
- * (`initRandomQueues`), ajout d'une voie entièrement nouvelle (`addRandomLane`) ou retrait d'une
- * voie existante tirée au hasard (`removeRandomLane`) — ces deux dernières sont les seules à faire
- * varier le nombre de voies au-delà du plafond `maxLanes` de la population initiale (CONCEPTION.md
- * §5.3 : composer/décomposer une vague en voies reste gratuit, seules les cases de chemin et les
- * monstres sont facturés). Inchangée si la vague n'a aucune voie (rien à muter, y compris pour
- * l'ajout — géré séparément), ou si la mutation de chemin choisie échoue (route résultante
- * invalide).
+ * probabilité `MUTATION_RATE`, applique un seul opérateur tiré dans `WAVE_MUTATIONS` — jamais
+ * plusieurs à la fois. Les opérateurs d'ajout/retrait de voie sont les seuls à faire varier le
+ * nombre de voies au-delà du plafond `maxLanes` de la population initiale (CONCEPTION.md §5.3 :
+ * composer/décomposer une vague en voies reste gratuit, seules les cases de chemin et les monstres
+ * sont facturés). La vague ressort inchangée si l'opérateur tiré ne s'applique pas (voie sans
+ * monstre, route résultante invalide, une seule voie pour un déplacement inter-voies…) — plutôt que
+ * d'en tirer un autre, pour que le poids de chaque opérateur reste celui déclaré. Une vague sans
+ * aucune voie n'a rien à muter : seul l'ajout de voie a du sens, il est appliqué directement.
+ *
+ * La vague obtenue peut sortir du budget d'attaque (ou le sous-consommer) : c'est `enforceBudget`,
+ * appelé juste après dans `evolveAttackWave`, qui la recale dans les deux sens.
  */
 function mutateWave(
   wave: Wave,
@@ -457,59 +701,61 @@ function mutateWave(
   if (wave.lanes.length === 0) {
     return addRandomLane(wave, map, towers, attackBudget, monsterCatalog);
   }
-
-  const laneIndex = Math.floor(Math.random() * wave.lanes.length);
-  const lanes = [...wave.lanes];
-  const roll = Math.random();
-
-  if (roll < 1 / 5) {
-    const otherPaths = lanes.filter((_, i) => i !== laneIndex).map((lane) => lane.path);
-    const mutatedRoute = initRandomRoute(map, towers, otherPaths);
-    if (mutatedRoute) {
-      lanes[laneIndex] = { ...lanes[laneIndex], path: mutatedRoute };
-    }
-  } else if (roll < 2 / 5) {
-    const mutatedRoute = removeRandomWaypoint(map, towers, lanes[laneIndex].path);
-    if (mutatedRoute) {
-      lanes[laneIndex] = { ...lanes[laneIndex], path: mutatedRoute };
-    }
-  } else if (roll < 3 / 5) {
-    const laneBudget = lanes[laneIndex].units.reduce((total, unit) => {
-      const type = monsterCatalog.find((candidate) => candidate.id === unit.type);
-      return total + (type?.cost ?? 0);
-    }, 0);
-    const [mutatedLane] = initRandomQueues([lanes[laneIndex].path], laneBudget, monsterCatalog);
-    lanes[laneIndex] = mutatedLane;
-  } else if (roll < 4 / 5) {
-    return addRandomLane({ lanes }, map, towers, attackBudget, monsterCatalog);
-  } else {
-    return removeRandomLane({ lanes });
-  }
-
-  return { lanes };
+  const context: MutationContext = { wave, map, towers, attackBudget, monsterCatalog };
+  return pickMutation()(context) ?? wave;
 }
 
 /**
- * Ramène une vague dans son budget d'attaque : `crossWaves` recombine des files chacune valide
- * chez son parent d'origine, mais leur total peut dépasser `attackBudget` une fois réunies dans
- * la vague fille. Tant que le coût total (`waveCost`) dépasse le budget, retire un monstre tiré
- * au hasard dans une file tirée au hasard (parmi celles non vides) ; les voies vidées de tous
- * leurs monstres sont retirées, comme le fait `initRandomWave`.
+ * Cale une vague sur son budget d'attaque, dans les deux sens — c'est là tout l'intérêt de la
+ * fonction, appelée sur chaque vague fille en sortie de `mutateWave` :
+ *
+ * - **En dépassement**, retire un monstre tiré au hasard dans une file tirée au hasard (parmi
+ *   celles non vides) tant que le coût total (`waveCost`) excède `attackBudget` : `crossWaves`
+ *   recombine des files chacune valide chez son parent d'origine, mais leur total peut dépasser le
+ *   budget une fois réunies dans la vague fille.
+ * - **En sous-consommation**, dépense le budget resté libre en monstres supplémentaires, insérés à
+ *   une place tirée au hasard dans une voie tirée au hasard, jusqu'à ce que plus rien ne soit
+ *   abordable. Sans ce second volet, rien dans l'évolution ne réinvestissait jamais le mou : le
+ *   croisement recombine des files qui peuvent totaliser bien moins que le budget, la mutation
+ *   « régénère la file » ne re-dépense que le coût de la voie qu'elle remplace, et le retrait
+ *   ci-dessus ne fait que soustraire. Le budget monstres ne pouvait donc que décroître de
+ *   génération en génération, pendant que les routes s'allongeaient (`spreadScore` récompense
+ *   chaque case occupée) et lui prenaient sa part — la vague finissait bien plus définie par son
+ *   tracé que par sa composition.
+ *
+ * Les voies vidées de tous leurs monstres sont retirées en fin de course, comme le fait
+ * `initRandomWave` — mais après le réinvestissement, qui peut regarnir une voie arrivée vide du
+ * croisement plutôt que de jeter son tracé (déjà payé, et qui rapporte de l'étalement).
  */
 export function enforceBudget(
   wave: Wave,
   attackBudget: number,
   monsterCatalog: readonly MonsterType[],
 ): Wave {
-  const lanes = wave.lanes.map((lane) => ({ ...lane, units: [...lane.units] }));
+  const lanes = cloneLanes(wave);
   while (waveCost({ lanes }, monsterCatalog) > attackBudget) {
-    const nonEmptyLanes = lanes.filter((lane) => lane.units.length > 0);
-    if (nonEmptyLanes.length === 0) {
+    const lane = pickRandom(lanes.filter((candidate) => candidate.units.length > 0));
+    if (!lane) {
       break;
     }
-    const lane = nonEmptyLanes[Math.floor(Math.random() * nonEmptyLanes.length)];
     lane.units.splice(Math.floor(Math.random() * lane.units.length), 1);
   }
+
+  // Un monstre gratuit rendrait la boucle ci-dessous infinie (budget restant jamais entamé) : on
+  // ne réinvestit que dans des types réellement facturés.
+  const buyable = buyableMonsters(monsterCatalog).filter((type) => type.cost > 0);
+  // Le coût des cases de chemin ne bouge pas d'une insertion à l'autre : `waveCost` une seule fois
+  // suffit, le reste se décompte au fil des achats.
+  let remaining = attackBudget - waveCost({ lanes }, monsterCatalog);
+  let affordable = buyable.filter((type) => type.cost <= remaining);
+  while (lanes.length > 0 && affordable.length > 0) {
+    const type = pickRandom(affordable)!;
+    const lane = pickRandom(lanes)!;
+    lane.units.splice(Math.floor(Math.random() * (lane.units.length + 1)), 0, { type: type.id });
+    remaining -= type.cost;
+    affordable = buyable.filter((candidate) => candidate.cost <= remaining);
+  }
+
   return { lanes: lanes.filter((lane) => lane.units.length > 0) };
 }
 

@@ -24,6 +24,7 @@ import {
   isChateauCell,
   isRiverCell,
   isSpawnCell,
+  riverCells,
   selectTarget,
 } from 'engine';
 import {
@@ -87,6 +88,11 @@ const CLUSTER_DISTANCE_PX = CELL_SIZE * 0.55;
 const CLUSTER_SPREAD_PX = CELL_SIZE * 0.4;
 /** Vitesse de lissage (0..1) du décalage d'amas d'une frame à l'autre. */
 const CLUSTER_EASE = 0.18;
+/**
+ * Déplacement horizontal (unités world) à dépasser pour que le sprite d'un monstre se retourne.
+ * Évite qu'un chemin en zigzag ne le fasse basculer d'un côté à l'autre à chaque tick.
+ */
+const FACING_FLIP_THRESHOLD = 0.25;
 /** Zoom minimal (légèrement sous le fit pour pouvoir dézoomer). */
 const VIEW_ZOOM_MIN = 0.75;
 const VIEW_ZOOM_MAX = 3.5;
@@ -337,6 +343,10 @@ export class GameBoard implements OnInit {
   private readonly clusterOffsets = new Map<string, GridCoord>();
   /** Dernier angle (radians) auquel chaque tour a visé une cible ; conservé tant qu'aucune cible n'est à portée. */
   private readonly towerFacing = new Map<string, number>();
+  /** Sens de marche retenu par monstre (1 = vers la droite) pour orienter son sprite. */
+  private readonly monsterFacing = new Map<string, number>();
+  /** Dernière abscisse world retenue par monstre ; ne progresse qu'au-delà de `FACING_FLIP_THRESHOLD`. */
+  private readonly monsterFacingRefX = new Map<string, number>();
   private projectileAnimationHandle: number | undefined;
 
   /** Pointeurs actifs pour pan / pinch-zoom. */
@@ -773,7 +783,9 @@ export class GameBoard implements OnInit {
         (tower) => tower.position.x === coord.x && tower.position.y === coord.y,
       );
       if (tappedTower) {
-        this.selectedAttackTowerId.update((id) => (id === tappedTower.id ? undefined : tappedTower.id));
+        this.selectedAttackTowerId.update((id) =>
+          id === tappedTower.id ? undefined : tappedTower.id,
+        );
         return;
       }
       // Clic ailleurs que sur la tour sélectionnée : efface sa portée affichée.
@@ -1184,6 +1196,35 @@ export class GameBoard implements OnInit {
     }
   }
 
+  /**
+   * Met à jour le sens de marche de chaque monstre, qui décide du miroir appliqué à son sprite.
+   * L'abscisse de référence n'avance qu'une fois `FACING_FLIP_THRESHOLD` franchi : la méthode est
+   * donc appelable à chaque frame (et non seulement à chaque tick) sans perdre l'orientation.
+   */
+  private updateMonsterFacings(monsters: readonly MonsterView[]): void {
+    const activeIds = new Set(monsters.map((monster) => monster.id));
+    for (const id of this.monsterFacing.keys()) {
+      if (!activeIds.has(id)) {
+        this.monsterFacing.delete(id);
+        this.monsterFacingRefX.delete(id);
+      }
+    }
+
+    for (const monster of monsters) {
+      const refX = this.monsterFacingRefX.get(monster.id);
+      if (refX === undefined) {
+        this.monsterFacingRefX.set(monster.id, monster.position.x);
+        this.monsterFacing.set(monster.id, 1);
+        continue;
+      }
+      const travelled = monster.position.x - refX;
+      if (Math.abs(travelled) >= FACING_FLIP_THRESHOLD) {
+        this.monsterFacing.set(monster.id, travelled > 0 ? 1 : -1);
+        this.monsterFacingRefX.set(monster.id, monster.position.x);
+      }
+    }
+  }
+
   /** Groupe les monstres dont les sprites se chevaucheraient à l'écran et leur assigne une position en cercle. */
   private computeClusterTargets(monsters: readonly MonsterView[]): Map<string, GridCoord> {
     const points = monsters.map((monster) => ({ id: monster.id, px: worldToPx(monster.position) }));
@@ -1251,6 +1292,10 @@ export class GameBoard implements OnInit {
       const map = await fetch(`maps/${mapId}.map.json`).then(
         (response) => response.json() as Promise<GameMap>,
       );
+      // Développe les rivières en cases une bonne fois pour toutes (index mémoïsé sur `map.rivers`,
+      // donc conservé même quand un tracé republie la carte) : sans ça, le premier `shortestPath`
+      // venu — tracé manuel ou premier tour d'IA — paierait ce développement en pleine interaction.
+      riverCells(map);
       this.decor.set(generateDecor(map));
       this.riverTexture.set(generatePathTexture(map.rivers ?? [], `${map.id}:river`));
       this.gameState.startRun(map, catalogEntry.startingData);
@@ -1755,6 +1800,7 @@ export class GameBoard implements OnInit {
 
     const now = performance.now();
     this.updateClusterOffsets(this.trialMonsters());
+    this.updateMonsterFacings(this.trialMonsters());
     for (const monster of this.trialMonsters()) {
       const base = worldToPx(monster.position);
       const clusterOffset = this.clusterOffsets.get(monster.id);
@@ -1774,10 +1820,11 @@ export class GameBoard implements OnInit {
       const maxHp = findMonsterType(monster.typeId)?.hp ?? monster.hp;
       const hpRatio = maxHp > 0 ? Math.max(0, monster.hp / maxHp) : 0;
       const radius = CELL_SIZE * 0.44;
+      const facesLeft = (this.monsterFacing.get(monster.id) ?? 1) < 0;
 
       this.drawMonsterShadow(ctx, cx, cy, radius);
 
-      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 1.1, flashAlpha)) {
+      if (!this.drawSprite(ctx, monster.typeId, cx, cy, CELL_SIZE * 1.1, flashAlpha, facesLeft)) {
         ctx.fillStyle = '#e0524a';
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -2023,6 +2070,8 @@ export class GameBoard implements OnInit {
    * Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête.
    * `flashAlpha` (0..1) surimpose une teinte blanche sur les pixels non transparents du sprite
    * (flash d'impact), en respectant sa silhouette grâce à `source-atop`.
+   * `flipX` retourne le sprite horizontalement : les sprites sont dessinés tournés vers la droite,
+   * c'est ce miroir qui oriente un monstre marchant vers la gauche.
    */
   private drawSprite(
     ctx: CanvasRenderingContext2D,
@@ -2031,12 +2080,21 @@ export class GameBoard implements OnInit {
     cy: number,
     size: number,
     flashAlpha = 0,
+    flipX = false,
   ): boolean {
     const image = this.sprites.get(id);
     if (!image || !image.complete || image.naturalWidth === 0) {
       return false;
     }
-    ctx.drawImage(image, cx - size / 2, cy - size / 2, size, size);
+    if (flipX) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(-1, 1);
+      ctx.drawImage(image, -size / 2, -size / 2, size, size);
+      ctx.restore();
+    } else {
+      ctx.drawImage(image, cx - size / 2, cy - size / 2, size, size);
+    }
     if (flashAlpha > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'source-atop';
