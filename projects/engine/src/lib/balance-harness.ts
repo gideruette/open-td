@@ -293,6 +293,221 @@ export async function playBalanceRun(
 }
 
 // ---------------------------------------------------------------------------
+// Indicateurs de forme de partie
+// ---------------------------------------------------------------------------
+
+/**
+ * Risque de fin de partie à un palier, conditionné au fait de l'avoir atteint.
+ *
+ * Un jeu intéressant a une courbe PLATE. Un taux de victoire global de 50% obtenu avec tout le
+ * risque concentré sur les premiers paliers ne décrit pas une partie serrée mais deux régimes
+ * (« l'attaque perce tôt » / « la partie est jouée d'avance »), ce que le seul %victoires masque.
+ *
+ * Convention de palier du harnais : la phase Défense qui répond à l'attaque du palier `p` est
+ * enregistrée avec `palier === p + 1`, le moteur incrémentant dans `resolveAttackSuccess`. Les deux
+ * risques ci-dessous sont donc bien ceux d'un même tour de jeu.
+ */
+export interface PalierHazard {
+  palier: number;
+  /** Parties ayant atteint ce palier (phase Attaque jouée). */
+  atRisk: number;
+  /** Attaques repoussées ici → la défense emporte la partie. */
+  attackFailures: number;
+  /** Phases Défense jouées ici, c.-à-d. attaques ayant percé. */
+  defensePhases: number;
+  /** Défenses percées ici → l'attaque emporte la partie. */
+  defenseFailures: number;
+  /** P(la partie s'arrête à ce palier | l'avoir atteint). */
+  hazard: number;
+  /** P(victoire finale de l'attaque | avoir atteint ce palier) : révèle où la partie se joue. */
+  eventualAttackWinRate: number;
+}
+
+/** Échantillon minimal pour qu'un palier pèse dans la recherche de bascule. */
+const TIPPING_MIN_SAMPLE = 10;
+/** Sous ce taux de victoire finale, l'attaque est considérée hors course. */
+const TIPPING_THRESHOLD = 0.1;
+/** Fenêtre « début de partie » pour la comparaison de risque précoce / tardif. */
+const EARLY_WINDOW = 5;
+
+/** Courbe de risque par palier, du palier 1 au plus profond atteint. */
+export function hazardCurve(runs: readonly RunMetrics[]): PalierHazard[] {
+  const maxPalier = Math.max(0, ...runs.flatMap((run) => run.attacks.map((phase) => phase.palier)));
+  const curve: PalierHazard[] = [];
+
+  for (let palier = 1; palier <= maxPalier; palier++) {
+    const reached = runs.filter((run) => run.attacks.some((phase) => phase.palier === palier));
+    if (reached.length === 0) {
+      continue;
+    }
+    const attackFailures = reached.filter((run) =>
+      run.attacks.some((phase) => phase.palier === palier && phase.outcome !== 'success'),
+    ).length;
+    const withDefense = reached.filter((run) =>
+      run.defenses.some((phase) => phase.palier === palier + 1),
+    );
+    const defenseFailures = withDefense.filter((run) =>
+      run.defenses.some((phase) => phase.palier === palier + 1 && phase.outcome !== 'success'),
+    ).length;
+
+    curve.push({
+      palier,
+      atRisk: reached.length,
+      attackFailures,
+      defensePhases: withDefense.length,
+      defenseFailures,
+      hazard: (attackFailures + defenseFailures) / reached.length,
+      eventualAttackWinRate:
+        reached.filter((run) => run.winner === 'attack').length / reached.length,
+    });
+  }
+  return curve;
+}
+
+/** Résumé scalaire de la forme de partie, dérivé de la courbe de risque. */
+export interface DecisionProfile {
+  /**
+   * Premier palier de la série terminale où l'attaque ne gagne plus que `TIPPING_THRESHOLD` :
+   * au-delà, la partie continue mais l'issue est écrite. `undefined` = l'attaque reste en course
+   * jusqu'au bout (l'objectif).
+   */
+  tippingPalier: number | undefined;
+  /** Part des tours joués au palier >= `tippingPalier` : temps de jeu dépensé sur une issue écrite. */
+  deadRoundShare: number;
+  /** Part des parties décidées au palier <= `earlyWindow`. */
+  earlyDecisionShare: number;
+  earlyWindow: number;
+  /** Risque agrégé (pooled) par tour, avant et après `earlyWindow`. */
+  hazardEarly: number;
+  hazardLate: number;
+  /** Palier avant lequel 90% des victoires de l'attaque sont acquises. */
+  attackWinP90: number | undefined;
+  /** Premier palier où la défense décroche une victoire : mesure le recouvrement des deux issues. */
+  firstDefenseWinPalier: number | undefined;
+}
+
+function quantile(sorted: readonly number[], q: number): number | undefined {
+  if (sorted.length === 0) {
+    return undefined;
+  }
+  const rank = Math.ceil(q * sorted.length) - 1;
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank))];
+}
+
+export function decisionProfile(runs: readonly RunMetrics[]): DecisionProfile {
+  const curve = hazardCurve(runs);
+
+  // Bascule : on remonte depuis la fin tant que l'attaque est hors course, pour ne pas confondre
+  // un creux transitoire avec la fin réelle de la course.
+  const usable = curve.filter((point) => point.atRisk >= TIPPING_MIN_SAMPLE);
+  let tippingPalier: number | undefined;
+  for (let i = usable.length - 1; i >= 0; i--) {
+    if (usable[i].eventualAttackWinRate > TIPPING_THRESHOLD) {
+      break;
+    }
+    tippingPalier = usable[i].palier;
+  }
+
+  const totalRounds = runs.reduce((total, run) => total + run.attacks.length, 0);
+  const deadRounds =
+    tippingPalier === undefined
+      ? 0
+      : runs.reduce(
+          (total, run) =>
+            total + run.attacks.filter((phase) => phase.palier >= tippingPalier!).length,
+          0,
+        );
+
+  const pooled = (points: readonly PalierHazard[]) => {
+    const atRisk = points.reduce((total, point) => total + point.atRisk, 0);
+    const ended = points.reduce(
+      (total, point) => total + point.attackFailures + point.defenseFailures,
+      0,
+    );
+    return atRisk > 0 ? ended / atRisk : 0;
+  };
+
+  const decided = runs.filter((run) => run.winner !== 'none');
+  const attackWins = runs
+    .filter((run) => run.winner === 'attack')
+    .map((run) => run.palierAtEnd)
+    .sort((a, b) => a - b);
+  const defenseWins = runs
+    .filter((run) => run.winner === 'defense')
+    .map((run) => run.palierAtEnd)
+    .sort((a, b) => a - b);
+
+  return {
+    tippingPalier,
+    deadRoundShare: totalRounds > 0 ? deadRounds / totalRounds : 0,
+    earlyDecisionShare:
+      runs.length > 0
+        ? decided.filter((run) => run.palierAtEnd <= EARLY_WINDOW).length / runs.length
+        : 0,
+    earlyWindow: EARLY_WINDOW,
+    hazardEarly: pooled(curve.filter((point) => point.palier <= EARLY_WINDOW)),
+    hazardLate: pooled(curve.filter((point) => point.palier > EARLY_WINDOW)),
+    attackWinP90: quantile(attackWins, 0.9),
+    firstDefenseWinPalier: defenseWins[0],
+  };
+}
+
+/**
+ * Santé des IA en fonction de la profondeur de partie. À `thinkMs` constant, l'espace de recherche
+ * croît avec le budget : une IA qui cesse de dépenser son budget en fin de partie sature, et les
+ * mesures d'équilibre tardives décrivent alors la limite du solveur, pas celle du jeu. À vérifier
+ * AVANT d'interpréter une domination tardive comme un déséquilibre.
+ */
+export interface AiDriftMetrics {
+  splitPalier: number;
+  attackPhasesEarly: number;
+  attackPhasesLate: number;
+  attackBudgetUseEarly: number;
+  attackBudgetUseLate: number;
+  attackSuccessEarly: number;
+  attackSuccessLate: number;
+  defenseBudgetUseEarly: number;
+  defenseBudgetUseLate: number;
+  defenseOverkillEarly: number;
+  defenseOverkillLate: number;
+}
+
+export function aiDrift(
+  runs: readonly RunMetrics[],
+  splitPalier: number = EARLY_WINDOW,
+): AiDriftMetrics {
+  const attacks = runs.flatMap((run) => run.attacks);
+  const defenses = runs.flatMap((run) => run.defenses);
+  const attackEarly = attacks.filter((phase) => phase.palier <= splitPalier);
+  const attackLate = attacks.filter((phase) => phase.palier > splitPalier);
+  const defenseEarly = defenses.filter((phase) => phase.palier <= splitPalier);
+  const defenseLate = defenses.filter((phase) => phase.palier > splitPalier);
+
+  const mean = (values: readonly number[]) =>
+    values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+  const use = (phases: readonly { spent: number; budget: number }[]) =>
+    mean(phases.map((phase) => phase.spent / Math.max(1, phase.budget)));
+  const successRate = (phases: readonly { outcome: PhaseOutcome }[]) =>
+    phases.length > 0
+      ? phases.filter((phase) => phase.outcome === 'success').length / phases.length
+      : 0;
+
+  return {
+    splitPalier,
+    attackPhasesEarly: attackEarly.length,
+    attackPhasesLate: attackLate.length,
+    attackBudgetUseEarly: use(attackEarly),
+    attackBudgetUseLate: use(attackLate),
+    attackSuccessEarly: successRate(attackEarly),
+    attackSuccessLate: successRate(attackLate),
+    defenseBudgetUseEarly: use(defenseEarly),
+    defenseBudgetUseLate: use(defenseLate),
+    defenseOverkillEarly: mean(defenseEarly.map((phase) => phase.overkill)),
+    defenseOverkillLate: mean(defenseLate.map((phase) => phase.overkill)),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Rapport
 // ---------------------------------------------------------------------------
 
@@ -443,31 +658,33 @@ export function formatBalanceReport(input: BalanceReportInput): string {
       `min ${palierStats.min} · max ${palierStats.max}`,
   );
 
+  const curve = hazardCurve(runs);
+  const profile = decisionProfile(runs);
+  const drift = aiDrift(runs);
+
   lines.push(`\n--- 2. Courbe par palier -------------------------------------------`);
-  const curveWidths = [7, 7, 11, 11, 11, 10, 10];
+  const curveWidths = [6, 5, 8, 8, 7, 9, 8, 7, 9];
   lines.push(
     row(
-      ['palier', 'runs', '%att réussie', '%déf tenue', 'budget att', '%att util', 'overkill déf'],
+      ['palier', 'runs', '%att OK', '%déf OK', 'risque', '%att fin', 'bud.att', '%util', 'overkill'],
       curveWidths,
     ),
   );
   lines.push('-'.repeat(curveWidths.reduce((a, b) => a + b + 2, 0)));
-  const maxPalierSeen = Math.max(...attacks.map((phase) => phase.palier), 1);
-  for (let palier = 1; palier <= maxPalierSeen; palier++) {
-    const atPalier = attacks.filter((phase) => phase.palier === palier);
-    if (atPalier.length === 0) {
-      continue;
-    }
-    const defenseAtPalier = defenses.filter((phase) => phase.palier === palier + 1);
+  for (const point of curve) {
+    const atPalier = attacks.filter((phase) => phase.palier === point.palier);
+    const defenseAtPalier = defenses.filter((phase) => phase.palier === point.palier + 1);
     const attackSuccess = atPalier.filter((phase) => phase.outcome === 'success').length;
     const defenseSuccess = defenseAtPalier.filter((phase) => phase.outcome === 'success').length;
     lines.push(
       row(
         [
-          String(palier),
-          String(atPalier.length),
+          String(point.palier),
+          String(point.atRisk),
           pct(attackSuccess / atPalier.length),
           defenseAtPalier.length > 0 ? pct(defenseSuccess / defenseAtPalier.length) : '—',
+          pct(point.hazard),
+          pct(point.eventualAttackWinRate),
           stats(atPalier.map((phase) => phase.budget)).mean.toFixed(0),
           pct(stats(atPalier.map((phase) => phase.spent / Math.max(1, phase.budget))).mean),
           defenseAtPalier.length > 0
@@ -478,6 +695,74 @@ export function formatBalanceReport(input: BalanceReportInput): string {
       ),
     );
   }
+  lines.push(
+    'Lire : risque = P(la partie s\'arrête ici | l\'avoir atteint) ; ' +
+      '%att fin = P(l\'attaque gagne au final | avoir atteint ce palier).',
+  );
+
+  lines.push(`\n--- 3. Forme de partie --------------------------------------------`);
+  lines.push(
+    `risque par tour : ${pct(profile.hazardEarly)} aux paliers 1-${profile.earlyWindow} · ` +
+      `${pct(profile.hazardLate)} au-delà` +
+      (profile.hazardLate > 0
+        ? `  (ratio ${(profile.hazardEarly / profile.hazardLate).toFixed(1)}×)`
+        : ''),
+  );
+  lines.push(
+    `parties décidées au palier <= ${profile.earlyWindow} : ${pct(profile.earlyDecisionShare)}`,
+  );
+  lines.push(
+    `90% des victoires attaque acquises au palier <= ${profile.attackWinP90 ?? '—'} · ` +
+      `1re victoire défense au palier ${profile.firstDefenseWinPalier ?? '—'}` +
+      (profile.attackWinP90 !== undefined &&
+      profile.firstDefenseWinPalier !== undefined &&
+      profile.attackWinP90 < profile.firstDefenseWinPalier
+        ? '  → issues disjointes : deux régimes, pas une partie serrée'
+        : ''),
+  );
+  if (profile.tippingPalier === undefined) {
+    lines.push(
+      `bascule : aucune — l'attaque reste en course (> ${pct(TIPPING_THRESHOLD)}) à tous les paliers`,
+    );
+  } else {
+    lines.push(
+      `bascule au palier ${profile.tippingPalier} : au-delà, l'attaque gagne ` +
+        `<= ${pct(TIPPING_THRESHOLD)} des parties`,
+    );
+    lines.push(
+      `tours joués sur une issue déjà écrite : ${pct(profile.deadRoundShare)} du total`,
+    );
+  }
+
+  lines.push(`\n--- 4. Dérive des IA (fiabilité de la mesure) ----------------------`);
+  const driftWidths = [22, 12, 12, 10];
+  lines.push(
+    row(
+      ['indicateur', `pal. 1-${drift.splitPalier}`, `pal. > ${drift.splitPalier}`, 'écart'],
+      driftWidths,
+    ),
+  );
+  lines.push('-'.repeat(driftWidths.reduce((a, b) => a + b + 2, 0)));
+  const driftRow = (label: string, early: number, late: number, format = pct) =>
+    lines.push(
+      row([label, format(early), format(late), format(late - early)], driftWidths),
+    );
+  driftRow('budget attaque util.', drift.attackBudgetUseEarly, drift.attackBudgetUseLate);
+  driftRow('attaques réussies', drift.attackSuccessEarly, drift.attackSuccessLate);
+  driftRow('budget défense util.', drift.defenseBudgetUseEarly, drift.defenseBudgetUseLate);
+  driftRow(
+    'overkill défense',
+    drift.defenseOverkillEarly,
+    drift.defenseOverkillLate,
+    (value) => value.toFixed(2),
+  );
+  lines.push(
+    `phases mesurées : ${drift.attackPhasesEarly} tôt · ${drift.attackPhasesLate} tard`,
+  );
+  lines.push(
+    'Lire : une utilisation du budget d\'attaque qui chute en fin de partie signale un GA qui sature ' +
+      'à thinkMs constant — la domination tardive mesure alors le solveur, pas le jeu.',
+  );
 
   const monsterCounts = new Map<string, number>();
   const monsterCosts = new Map<string, number>();
@@ -491,7 +776,7 @@ export function formatBalanceReport(input: BalanceReportInput): string {
   }
   const monsterEntropy = logUsageTable(
     lines,
-    '--- 3. Monstres (demande révélée par l\'IA d\'attaque) --------------',
+    '--- 5. Monstres (demande révélée par l\'IA d\'attaque) --------------',
     buyableMonsters,
     'unités',
     monsterCounts,
@@ -512,7 +797,7 @@ export function formatBalanceReport(input: BalanceReportInput): string {
   }
   const towerEntropy = logUsageTable(
     lines,
-    '--- 4. Tours (demande révélée par l\'IA de défense) ----------------',
+    '--- 6. Tours (demande révélée par l\'IA de défense) ----------------',
     TOWER_TYPES,
     'tours',
     towerCounts,
@@ -524,7 +809,7 @@ export function formatBalanceReport(input: BalanceReportInput): string {
   const laneStats = stats(attacks.map((phase) => phase.lanes));
   const cellStats = stats(attacks.map((phase) => phase.routeCells));
   const routeShareStats = stats(attacks.map((phase) => phase.routeCost / Math.max(1, phase.spent)));
-  lines.push(`\n--- 5. Routes -----------------------------------------------------`);
+  lines.push(`\n--- 7. Routes -----------------------------------------------------`);
   lines.push(
     `voies par vague     : médiane ${laneStats.median} · moyenne ${laneStats.mean.toFixed(2)} · ` +
       `min ${laneStats.min} · max ${laneStats.max}  (plafond ${options.attackMaxLanes})`,
@@ -545,7 +830,7 @@ export function formatBalanceReport(input: BalanceReportInput): string {
   const breachStats = stats(failedAttacks.map((phase) => phase.breaches));
   const hpLeftStats = stats(failedAttacks.map((phase) => phase.chateauHpLeft));
 
-  lines.push(`\n--- 6. Marges et tension ------------------------------------------`);
+  lines.push(`\n--- 8. Marges et tension ------------------------------------------`);
   lines.push(
     `budget attaque utilisé : moyenne ${pct(attackUseStats.mean)} · min ${pct(attackUseStats.min)}`,
   );
@@ -601,6 +886,47 @@ export function formatBalanceReport(input: BalanceReportInput): string {
       `un camp gagne 100% des parties → régler le ratio de croissance des budgets AVANT les prix`,
     );
   }
+
+  // Forme de partie : un %victoires équilibré peut cacher une partie décidée d'avance.
+  if (profile.tippingPalier !== undefined) {
+    alerts.push(
+      `partie décidée dès le palier ${profile.tippingPalier} (l'attaque y gagne ` +
+        `<= ${pct(TIPPING_THRESHOLD)}) → ${pct(profile.deadRoundShare)} des tours joués le sont ` +
+        `sur une issue écrite`,
+    );
+  }
+  if (profile.hazardLate > 0 && profile.hazardEarly > 2 * profile.hazardLate) {
+    alerts.push(
+      `risque concentré au début (${pct(profile.hazardEarly)} vs ${pct(profile.hazardLate)} par ` +
+        `tour) → le %victoires global mélange deux régimes, il ne mesure pas une partie serrée`,
+    );
+  }
+  if (
+    profile.attackWinP90 !== undefined &&
+    profile.firstDefenseWinPalier !== undefined &&
+    profile.attackWinP90 < profile.firstDefenseWinPalier
+  ) {
+    alerts.push(
+      `issues disjointes : 90% des victoires attaque avant le palier ${profile.attackWinP90}, ` +
+        `1re victoire défense au palier ${profile.firstDefenseWinPalier} → aucun recouvrement`,
+    );
+  }
+
+  // Fiabilité : distinguer un déséquilibre réel d'une IA qui sature à thinkMs constant.
+  if (drift.attackPhasesLate > 0 && drift.attackBudgetUseLate < drift.attackBudgetUseEarly - 0.03) {
+    alerts.push(
+      `l'IA d'attaque cesse de dépenser son budget en fin de partie ` +
+        `(${pct(drift.attackBudgetUseEarly)} → ${pct(drift.attackBudgetUseLate)}) → GA saturé à ` +
+        `${options.thinkMs} ms, rejouer plus haut AVANT d'en tirer une conclusion de prix`,
+    );
+  }
+  if (drift.attackPhasesLate > 0 && drift.defenseBudgetUseLate < drift.defenseBudgetUseEarly - 0.03) {
+    alerts.push(
+      `l'IA de défense cesse de dépenser son budget en fin de partie ` +
+        `(${pct(drift.defenseBudgetUseEarly)} → ${pct(drift.defenseBudgetUseLate)}) → GA saturé à ` +
+        `${options.thinkMs} ms`,
+    );
+  }
   if (monsterEntropy < 0.6) {
     alerts.push(`entropie monstres ${monsterEntropy.toFixed(3)} < 0.6 → catalogue peu diversifié`);
   }
@@ -625,7 +951,7 @@ export function formatBalanceReport(input: BalanceReportInput): string {
     );
   }
 
-  lines.push(`\n--- 7. Alertes (indicatif) ----------------------------------------`);
+  lines.push(`\n--- 9. Alertes (indicatif) ----------------------------------------`);
   if (alerts.length === 0) {
     lines.push('aucune');
   } else {

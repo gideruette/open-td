@@ -107,6 +107,13 @@ const PAN_EDGE_MARGIN_PX = 64;
  * logiques, `renderScale` étant appliqué via `setTransform`.
  */
 const MAX_CANVAS_PIXELS = 1_600_000;
+/**
+ * Côté (px) auquel les sprites SVG sont rastérisés une fois pour toutes au chargement. Dessiner
+ * un `<img>` SVG sous une transformation (rotation d'une tour, miroir d'un monstre) peut forcer
+ * le navigateur à re-rastériser le vectoriel à chaque frame ; un bitmap, lui, est un simple blit.
+ * 128 = deux fois la plus grande taille d'affichage (`CELL_SIZE * 2`), pour rester net au zoom.
+ */
+const SPRITE_RASTER_PX = 128;
 const SPRITE_IDS = [
   'archer',
   'canon',
@@ -338,6 +345,14 @@ export class GameBoard implements OnInit {
   private pendingAttackWave: Wave | undefined;
   private trialTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly sprites = new Map<string, HTMLImageElement>();
+  /** Sprites rastérisés au chargement (cf. `SPRITE_RASTER_PX`) : c'est eux qui sont blittés. */
+  private readonly spriteBitmaps = new Map<string, HTMLCanvasElement>();
+  /**
+   * Silhouette blanche de chaque sprite, pré-calculée. Le flash d'impact se réduit ainsi à un
+   * `drawImage` en `globalAlpha`, au lieu d'un changement de mode de composition par monstre
+   * touché et par frame.
+   */
+  private readonly spriteFlashes = new Map<string, HTMLCanvasElement>();
   private readonly spriteVersion = signal(0);
   protected readonly biomeColors = signal<MapBiomeColors>(DEFAULT_BIOME_COLORS);
   protected readonly decor = signal<readonly DecorItem[]>([]);
@@ -727,10 +742,48 @@ export class GameBoard implements OnInit {
   private preloadSprites(): void {
     for (const id of SPRITE_IDS) {
       const image = new Image();
-      image.onload = () => this.spriteVersion.update((version) => version + 1);
+      image.onload = () => {
+        this.bakeSprite(id, image);
+        this.spriteVersion.update((version) => version + 1);
+      };
       image.src = `assets/sprites/${id}.svg`;
       this.sprites.set(id, image);
     }
+  }
+
+  /**
+   * Rastérise un sprite fraîchement chargé et en dérive sa silhouette blanche (flash d'impact).
+   * Les deux sont produits une seule fois ici, jamais pendant le rendu.
+   */
+  private bakeSprite(id: string, image: HTMLImageElement): void {
+    // Les SVG du jeu n'ont qu'un `viewBox` : les navigateurs qui n'en déduisent pas de taille
+    // intrinsèque ne savent pas non plus les rastériser — on garde alors le rendu de repli.
+    if (image.naturalWidth === 0) {
+      return;
+    }
+    const bitmap = document.createElement('canvas');
+    bitmap.width = SPRITE_RASTER_PX;
+    bitmap.height = SPRITE_RASTER_PX;
+    const bitmapCtx = bitmap.getContext('2d');
+    if (!bitmapCtx) {
+      return;
+    }
+    bitmapCtx.drawImage(image, 0, 0, SPRITE_RASTER_PX, SPRITE_RASTER_PX);
+    this.spriteBitmaps.set(id, bitmap);
+
+    const flash = document.createElement('canvas');
+    flash.width = SPRITE_RASTER_PX;
+    flash.height = SPRITE_RASTER_PX;
+    const flashCtx = flash.getContext('2d');
+    if (!flashCtx) {
+      return;
+    }
+    // Ici `source-atop` fait bien ce qu'on attend : la destination est vide hors de la silhouette.
+    flashCtx.drawImage(bitmap, 0, 0);
+    flashCtx.globalCompositeOperation = 'source-atop';
+    flashCtx.fillStyle = '#ffffff';
+    flashCtx.fillRect(0, 0, SPRITE_RASTER_PX, SPRITE_RASTER_PX);
+    this.spriteFlashes.set(id, flash);
   }
 
   // ---- Phase Défense ---------------------------------------------------
@@ -1180,19 +1233,21 @@ export class GameBoard implements OnInit {
     return bestId;
   }
 
-  /** Effet de flash/recul actif sur ce monstre à l'instant `now`, s'il en a un (le plus récent sinon). */
-  private activeHitEffect(monsterId: string, now: number): HitEffectView | undefined {
-    let latest: HitEffectView | undefined;
+  /**
+   * Flash/recul actif de chaque monstre à l'instant `now` (le plus récent en cas de tirs
+   * multiples). Indexé en une passe : une recherche par monstre rendait le rendu quadratique
+   * pile au moment où il y a le plus d'effets à l'écran.
+   */
+  private activeHitEffects(now: number): Map<string, HitEffectView> {
+    const latest = new Map<string, HitEffectView>();
     for (const effect of this.hitEffects) {
-      if (effect.monsterId !== monsterId) {
-        continue;
-      }
       const elapsed = now - effect.firedAtMs;
       if (elapsed < 0 || elapsed >= HIT_EFFECT_DURATION_MS) {
         continue;
       }
-      if (!latest || effect.firedAtMs > latest.firedAtMs) {
-        latest = effect;
+      const current = latest.get(effect.monsterId);
+      if (!current || effect.firedAtMs > current.firedAtMs) {
+        latest.set(effect.monsterId, effect);
       }
     }
     return latest;
@@ -1906,6 +1961,7 @@ export class GameBoard implements OnInit {
     const now = performance.now();
     this.updateClusterOffsets(this.trialMonsters());
     this.updateMonsterFacings(this.trialMonsters());
+    const hitEffects = this.activeHitEffects(now);
     for (const monster of this.trialMonsters()) {
       const base = worldToPx(monster.position);
       const clusterOffset = this.clusterOffsets.get(monster.id);
@@ -1913,7 +1969,7 @@ export class GameBoard implements OnInit {
       let cy = base.y + (clusterOffset?.y ?? 0);
 
       let flashAlpha = 0;
-      const hit = this.activeHitEffect(monster.id, now);
+      const hit = hitEffects.get(monster.id);
       if (hit) {
         const t = (now - hit.firedAtMs) / HIT_EFFECT_DURATION_MS;
         const recoil = HIT_RECOIL_PX * Math.sin(t * Math.PI);
@@ -2168,9 +2224,8 @@ export class GameBoard implements OnInit {
   }
 
   /**
-   * Dessine le sprite `id` centré sur (cx, cy). Retourne false si l'image n'est pas encore prête.
-   * `flashAlpha` (0..1) surimpose une teinte blanche sur les pixels non transparents du sprite
-   * (flash d'impact), en respectant sa silhouette grâce à `source-atop`.
+   * Dessine le sprite `id` centré sur (cx, cy). Retourne false si le sprite n'est pas rastérisé.
+   * `flashAlpha` (0..1) surimpose la silhouette blanche pré-calculée du sprite (flash d'impact).
    * `flipX` retourne le sprite horizontalement : les sprites sont dessinés tournés vers la droite,
    * c'est ce miroir qui oriente un monstre marchant vers la gauche.
    */
@@ -2183,26 +2238,27 @@ export class GameBoard implements OnInit {
     flashAlpha = 0,
     flipX = false,
   ): boolean {
-    const image = this.sprites.get(id);
-    if (!image || !image.complete || image.naturalWidth === 0) {
+    const bitmap = this.spriteBitmaps.get(id);
+    if (!bitmap) {
       return false;
     }
     if (flipX) {
       ctx.save();
       ctx.translate(cx, cy);
       ctx.scale(-1, 1);
-      ctx.drawImage(image, -size / 2, -size / 2, size, size);
-      ctx.restore();
-    } else {
-      ctx.drawImage(image, cx - size / 2, cy - size / 2, size, size);
+      ctx.translate(-cx, -cy);
     }
-    if (flashAlpha > 0) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-      ctx.beginPath();
-      ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-      ctx.fill();
+    const left = cx - size / 2;
+    const top = cy - size / 2;
+    ctx.drawImage(bitmap, left, top, size, size);
+    const flash = flashAlpha > 0 ? this.spriteFlashes.get(id) : undefined;
+    if (flash) {
+      const previousAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = previousAlpha * Math.min(1, flashAlpha);
+      ctx.drawImage(flash, left, top, size, size);
+      ctx.globalAlpha = previousAlpha;
+    }
+    if (flipX) {
       ctx.restore();
     }
     return true;
