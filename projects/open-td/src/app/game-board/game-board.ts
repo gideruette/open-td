@@ -100,6 +100,13 @@ const VIEW_ZOOM_MAX = 3.5;
 const PAN_DRAG_THRESHOLD_PX = 10;
 /** Marge de pan autorisée hors cadre (sinon ×1 = pan impossible = conflit avec la pose). */
 const PAN_EDGE_MARGIN_PX = 64;
+/**
+ * Plafond de pixels du backing store du canvas. Les grandes cartes (40×30 → ~3,4 Mpx) sont
+ * rendues à une échelle réduite : le canvas est de toute façon affiché « contain » dans le
+ * viewport, très en dessous de sa taille logique sur mobile. Le dessin reste écrit en pixels
+ * logiques, `renderScale` étant appliqué via `setTransform`.
+ */
+const MAX_CANVAS_PIXELS = 1_600_000;
 const SPRITE_IDS = [
   'archer',
   'canon',
@@ -348,6 +355,24 @@ export class GameBoard implements OnInit {
   /** Dernière abscisse world retenue par monstre ; ne progresse qu'au-delà de `FACING_FLIP_THRESHOLD`. */
   private readonly monsterFacingRefX = new Map<string, number>();
   private projectileAnimationHandle: number | undefined;
+
+  /** Contexte 2D du canvas principal, mémorisé (`getContext` est appelé à chaque frame sinon). */
+  private boardCtx: CanvasRenderingContext2D | undefined;
+  /** Canvas auquel appartient `boardCtx`, pour ne pas réutiliser un contexte d'un élément remplacé. */
+  private boardCtxOwner: HTMLCanvasElement | undefined;
+  /**
+   * Calque du décor statique (fond, grille, bords, rivières, chemins) pré-rendu hors écran.
+   * Le run redessine 60 fois par seconde : sans ce cache, chaque frame retracerait un millier
+   * d'hexagones et des centaines de mouchetures pour un résultat identique.
+   */
+  private backgroundLayer: HTMLCanvasElement | undefined;
+  /** Signature du contenu de `backgroundLayer` ; le calque est régénéré dès qu'elle change. */
+  private backgroundKey: string | undefined;
+  /** Taille du plateau en pixels logiques (repère de tout le code de dessin et de hit-test). */
+  private boardWidthPx = 0;
+  private boardHeightPx = 0;
+  /** Rapport pixels du backing store / pixels logiques (≤ 1, cf. `MAX_CANVAS_PIXELS`). */
+  private renderScale = 1;
 
   /** Pointeurs actifs pour pan / pinch-zoom. */
   private readonly activePointers = new Map<number, { x: number; y: number }>();
@@ -1235,11 +1260,13 @@ export class GameBoard implements OnInit {
       }
       return index;
     };
+    // Comparaison au carré : la boucle est quadratique et tourne à chaque frame.
+    const clusterDistanceSquared = CLUSTER_DISTANCE_PX * CLUSTER_DISTANCE_PX;
     for (let i = 0; i < points.length; i++) {
       for (let j = i + 1; j < points.length; j++) {
         const dx = points[i].px.x - points[j].px.x;
         const dy = points[i].px.y - points[j].px.y;
-        if (Math.hypot(dx, dy) < CLUSTER_DISTANCE_PX) {
+        if (dx * dx + dy * dy < clusterDistanceSquared) {
           const rootI = find(i);
           const rootJ = find(j);
           if (rootI !== rootJ) {
@@ -1346,16 +1373,17 @@ export class GameBoard implements OnInit {
     }
     const layoutW = canvas.offsetWidth;
     const layoutH = canvas.offsetHeight;
-    if (layoutW <= 0 || layoutH <= 0) {
+    if (layoutW <= 0 || layoutH <= 0 || this.boardWidthPx <= 0 || this.boardHeightPx <= 0) {
       return undefined;
     }
     const rect = viewport.getBoundingClientRect();
     const zoom = this.viewZoom();
     const layoutX = (clientX - rect.left - this.viewPanX()) / zoom;
     const layoutY = (clientY - rect.top - this.viewPanY()) / zoom;
+    // Pixels logiques, et non pixels du backing store : c'est le repère du code de dessin.
     return {
-      x: layoutX * (canvas.width / layoutW),
-      y: layoutY * (canvas.height / layoutH),
+      x: layoutX * (this.boardWidthPx / layoutW),
+      y: layoutY * (this.boardHeightPx / layoutH),
     };
   }
 
@@ -1530,7 +1558,7 @@ export class GameBoard implements OnInit {
   private fitCanvasToViewport(): void {
     const canvas = this.canvasRef()?.nativeElement;
     const viewport = this.viewportRef()?.nativeElement;
-    if (!canvas || !viewport || canvas.width <= 0 || canvas.height <= 0) {
+    if (!canvas || !viewport || this.boardWidthPx <= 0 || this.boardHeightPx <= 0) {
       return;
     }
     const availableW = viewport.clientWidth;
@@ -1538,23 +1566,36 @@ export class GameBoard implements OnInit {
     if (availableW <= 0 || availableH <= 0) {
       return;
     }
-    const scale = Math.min(availableW / canvas.width, availableH / canvas.height);
-    canvas.style.width = `${canvas.width * scale}px`;
-    canvas.style.height = `${canvas.height * scale}px`;
+    const scale = Math.min(availableW / this.boardWidthPx, availableH / this.boardHeightPx);
+    canvas.style.width = `${this.boardWidthPx * scale}px`;
+    canvas.style.height = `${this.boardHeightPx * scale}px`;
   }
 
-  private draw(): void {
-    const canvas = this.canvasRef()?.nativeElement;
-    const map = this.map();
-    if (!canvas || !map) {
-      return;
-    }
+  /**
+   * Redimensionne le canvas si la carte a changé de gabarit et renvoie son contexte, prêt à
+   * recevoir un dessin exprimé en pixels logiques (la réduction `renderScale` du backing store
+   * est portée par la transformation courante).
+   */
+  private prepareBoardContext(
+    canvas: HTMLCanvasElement,
+    map: GameMap,
+  ): CanvasRenderingContext2D | undefined {
     const { width, height } = hexGridPixelSize(map.grid.cols, map.grid.rows, CELL_SIZE);
-    const canvasWidth = Math.ceil(width + 2 * CANVAS_PAD);
-    const canvasHeight = Math.ceil(height + 2 * CANVAS_PAD);
-    if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
-      canvas.width = canvasWidth;
-      canvas.height = canvasHeight;
+    const boardWidth = Math.ceil(width + 2 * CANVAS_PAD);
+    const boardHeight = Math.ceil(height + 2 * CANVAS_PAD);
+    const renderScale = Math.min(1, Math.sqrt(MAX_CANVAS_PIXELS / (boardWidth * boardHeight)));
+    const backingWidth = Math.ceil(boardWidth * renderScale);
+    const backingHeight = Math.ceil(boardHeight * renderScale);
+
+    this.boardWidthPx = boardWidth;
+    this.boardHeightPx = boardHeight;
+    this.renderScale = renderScale;
+
+    if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+      canvas.width = backingWidth;
+      canvas.height = backingHeight;
+      // Redimensionner un canvas réinitialise son contexte : le calque de fond est à refaire.
+      this.backgroundKey = undefined;
       this.fitCanvasToViewport();
       this.clampPan();
     } else if (!canvas.style.width) {
@@ -1562,14 +1603,48 @@ export class GameBoard implements OnInit {
       this.clampPan();
     }
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return;
+    if (this.boardCtxOwner !== canvas) {
+      this.boardCtx = canvas.getContext('2d') ?? undefined;
+      this.boardCtxOwner = canvas;
+    }
+    this.boardCtx?.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+    return this.boardCtx;
+  }
+
+  /**
+   * Calque du décor statique : fond, décor, bords, grille, rivières et chemins de la carte.
+   * Rien là-dedans ne bouge pendant un run, d'où le pré-rendu hors écran réutilisé tel quel
+   * frame après frame — c'est la majeure partie du coût de dessin d'un plateau.
+   */
+  private backgroundFor(map: GameMap): HTMLCanvasElement | undefined {
+    const biome = this.biomeColors();
+    const isAttackPhase = this.phase() === 'attack';
+    const key = [
+      map.id,
+      this.boardWidthPx,
+      this.boardHeightPx,
+      this.renderScale,
+      isAttackPhase ? 'attack' : 'defense',
+      biome.background,
+      this.decor().length,
+      this.pathTexture().length,
+      this.riverTexture().length,
+    ].join('|');
+    if (this.backgroundLayer && this.backgroundKey === key) {
+      return this.backgroundLayer;
     }
 
-    const biome = this.biomeColors();
+    const layer = this.backgroundLayer ?? document.createElement('canvas');
+    layer.width = Math.ceil(this.boardWidthPx * this.renderScale);
+    layer.height = Math.ceil(this.boardHeightPx * this.renderScale);
+    const ctx = layer.getContext('2d');
+    if (!ctx) {
+      return undefined;
+    }
+    ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
+
     ctx.fillStyle = biome.background;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, this.boardWidthPx, this.boardHeightPx);
     this.drawDecor(ctx, biome.decor);
 
     // Bords de la grille : jamais constructibles (CONCEPTION.md §4).
@@ -1591,7 +1666,6 @@ export class GameBoard implements OnInit {
       }
     }
 
-    const isAttackPhase = this.phase() === 'attack';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -1625,6 +1699,32 @@ export class GameBoard implements OnInit {
         ctx.fill();
       }
     }
+
+    this.backgroundLayer = layer;
+    this.backgroundKey = key;
+    return layer;
+  }
+
+  private draw(): void {
+    const canvas = this.canvasRef()?.nativeElement;
+    const map = this.map();
+    if (!canvas || !map) {
+      return;
+    }
+    const ctx = this.prepareBoardContext(canvas, map);
+    if (!ctx) {
+      return;
+    }
+
+    const background = this.backgroundFor(map);
+    if (background) {
+      // Le calque est rendu au même `renderScale` : la copie est donc pixel pour pixel.
+      ctx.drawImage(background, 0, 0, this.boardWidthPx, this.boardHeightPx);
+    }
+
+    const isAttackPhase = this.phase() === 'attack';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
     // Portée de la tour cliquée en phase Attaque : teinte les cases qu'elle couvre.
     if (isAttackPhase) {
@@ -1749,6 +1849,13 @@ export class GameBoard implements OnInit {
       }
     }
 
+    // Cibles candidates montées une seule fois : `computeTowerFacing` est appelé par tour, à
+    // chaque frame, et reconstruisait sinon la même liste autant de fois qu'il y a de tours.
+    const facingCandidates = this.trialMonsters().map((monster, index) => ({
+      id: String(index),
+      distance: monster.distance,
+      position: monster.position,
+    }));
     for (const tower of this.towers()) {
       const isSelected = tower.id === this.pickingTower()?.id;
       const type = findTowerType(tower.typeId);
@@ -1766,7 +1873,7 @@ export class GameBoard implements OnInit {
 
       this.drawTowerShadow(ctx, center);
 
-      const facing = this.computeTowerFacing(tower, type, center);
+      const facing = this.computeTowerFacing(tower, type, center, facingCandidates);
       ctx.save();
       ctx.translate(center.x, center.y);
       ctx.rotate(facing);
@@ -2043,16 +2150,12 @@ export class GameBoard implements OnInit {
     tower: TowerInstance,
     type: TowerType | undefined,
     center: GridCoord,
+    candidates: readonly { id: string; distance: number; position: GridCoord }[],
   ): number {
     if (!type) {
       return this.towerFacing.get(tower.id) ?? 0;
     }
     const monsters = this.trialMonsters();
-    const candidates = monsters.map((monster, index) => ({
-      id: String(index),
-      distance: monster.distance,
-      position: monster.position,
-    }));
     const targetId = selectTarget(hexToWorld(tower.position), type.range, candidates);
     if (targetId === undefined) {
       return this.towerFacing.get(tower.id) ?? 0;
