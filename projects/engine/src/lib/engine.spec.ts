@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GameMap, MapPath, MapSpawn, StartingData, Wave, WaveLane, WaveUnit } from 'shared';
+import { findTowerType } from 'shared';
 import { GameEngine } from './engine';
 import { canOccupyCell, isBorderCell, isChateauCell } from './fortress';
 import { expandPathCells, pathCellsCost } from './path';
@@ -93,7 +94,7 @@ describe('GameEngine', () => {
 
       expect(result).toEqual({ ok: true });
       expect(engine.getTowers()).toHaveLength(1);
-      expect(engine.getRemainingBudget()).toBe(80);
+      expect(engine.getRemainingBudget()).toBe(100 - findTowerType('archer')!.cost);
     });
 
     it('stamps new towers with the current palier', () => {
@@ -179,9 +180,9 @@ describe('GameEngine', () => {
 
       const recovered = engine.deleteTower(towerId);
 
-      expect(recovered).toBe(20);
+      expect(recovered).toBe(findTowerType('archer')!.cost);
       expect(engine.getTowers()).toHaveLength(0);
-      expect(engine.getRemainingBudget()).toBe(100); // 100 - 20 + 20
+      expect(engine.getRemainingBudget()).toBe(100);
     });
 
     it('frees the cell so a new tower can be placed there', () => {
@@ -220,7 +221,7 @@ describe('GameEngine', () => {
       engine.resolveDefenseSuccess();
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }]))); // palier -> 3, back to defense
 
-      expect(engine.deleteTower(towerId)).toBe(20);
+      expect(engine.deleteTower(towerId)).toBe(findTowerType('archer')!.cost);
       expect(engine.getRemainingBudget()).toBe(engine.getDefenseBudget());
     });
   });
@@ -310,6 +311,42 @@ describe('GameEngine', () => {
       engine.resolveDefenseSuccess();
 
       expect(engine.moveTower(towerId, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'wrong-phase' });
+    });
+  });
+
+  describe('applyFortressLayout', () => {
+    it('keeps matching towers, deletes extras, and places the rest', () => {
+      const engine = new GameEngine();
+      startInDefense(engine, { startingDefenseBudget: 200 });
+      engine.placeTower('archer', { x: 1, y: 1 });
+      engine.placeTower('archer', { x: 2, y: 2 });
+      const keptId = engine.getTowers()[0].id;
+
+      const { rejected } = engine.applyFortressLayout([
+        { id: 'keep', typeId: 'archer', position: { x: 1, y: 1 }, level: 1, placedAtPalier: 2 },
+        { id: 'new', typeId: 'archer', position: { x: 1, y: 2 }, level: 1, placedAtPalier: 2 },
+      ]);
+
+      expect(rejected).toBe(0);
+      const towers = engine.getTowers();
+      expect(towers).toHaveLength(2);
+      expect(towers.some((tower) => tower.id === keptId)).toBe(true);
+      expect(towers.some((tower) => tower.position.x === 1 && tower.position.y === 2)).toBe(true);
+      expect(towers.some((tower) => tower.position.x === 2 && tower.position.y === 2)).toBe(false);
+    });
+
+    it('keeps towers across a full defense → attack → defense cycle', () => {
+      const engine = new GameEngine();
+      startInDefense(engine, { startingDefenseBudget: 200, budgetGrowth: { defense: 40, attack: 30 } });
+      engine.placeTower('archer', { x: 1, y: 1 });
+      const id = engine.getTowers()[0].id;
+      engine.resolveDefenseSuccess();
+      engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
+
+      expect(engine.getPhase()).toBe('defense');
+      expect(engine.getTowers()[0].id).toBe(id);
+      engine.applyFortressLayout(engine.getTowers());
+      expect(engine.getTowers()[0].id).toBe(id);
     });
   });
 
@@ -435,6 +472,17 @@ describe('GameEngine', () => {
       const trial = engine.startAttackTrial(composedWave);
 
       expect(trial.runToCompletion()).toBe('success'); // no towers defending, the goblin destroys the château
+    });
+
+    it('throws when the composed wave costs more than the attack budget', () => {
+      const engine = new GameEngine();
+      startInDefense(engine, { startingAttackBudget: 20 });
+      engine.resolveDefenseSuccess();
+
+      // orc cost 12 (shared/monsters.ts): three of them, plus the route, is well past a budget of 20.
+      const tooExpensive = wave(lane([{ type: 'orc' }, { type: 'orc' }, { type: 'orc' }]));
+
+      expect(() => engine.startAttackTrial(tooExpensive)).toThrow();
     });
 
     it('replaces vagueCourante, raises the palier and grows both budgets on attack success', () => {
@@ -619,7 +667,7 @@ describe('GameEngine', () => {
       engine.placeTower('archer', { x: 1, y: 1 });
 
       expect(engine.getDefenseBudget()).toBe(100);
-      expect(engine.getRemainingBudget()).toBe(80);
+      expect(engine.getRemainingBudget()).toBe(100 - findTowerType('archer')!.cost);
     });
 
     it('grows after an attack success, alongside the remaining budget', () => {

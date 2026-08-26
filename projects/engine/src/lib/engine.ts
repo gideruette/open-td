@@ -160,6 +160,40 @@ export class GameEngine {
     return this.savedAttackPlan;
   }
 
+  /**
+   * Aligne la forteresse persistante sur `target` : suppression (remboursement) des tours absentes
+   * du plan, puis pose des manquantes. Le budget brut du palier reste le plafond ; on ne part plus
+   * d'un plateau vide.
+   */
+  applyFortressLayout(target: readonly TowerInstance[]): { rejected: number } {
+    const wanted = new Map<string, string>();
+    for (const tower of target) {
+      wanted.set(`${tower.position.x},${tower.position.y}`, tower.typeId);
+    }
+
+    for (const tower of [...this.towers]) {
+      const key = `${tower.position.x},${tower.position.y}`;
+      if (wanted.get(key) !== tower.typeId) {
+        this.deleteTower(tower.id);
+      }
+    }
+
+    let rejected = 0;
+    const present = new Set(this.towers.map((tower) => `${tower.position.x},${tower.position.y}`));
+    for (const tower of target) {
+      const key = `${tower.position.x},${tower.position.y}`;
+      if (present.has(key)) {
+        continue;
+      }
+      if (!this.placeTower(tower.typeId, tower.position).ok) {
+        rejected++;
+      } else {
+        present.add(key);
+      }
+    }
+    return { rejected };
+  }
+
   /** Place une tour du type donné sur la case ciblée, si les règles le permettent (Défense uniquement). */
   placeTower(typeId: string, position: GridCoord): PlacementResult {
     if (this.phaseState !== 'defense') {
@@ -254,13 +288,25 @@ export class GameEngine {
     this.towers = [];
   }
 
-  /** Lance une épreuve d'attaque : la vague composée par le joueur contre la forteresse figée. */
+  /**
+   * Lance une épreuve d'attaque : la vague composée par le joueur contre la forteresse figée.
+   *
+   * `waveCost(wave) > this.attackBudget` rejette la vague avant toute simulation — seul garde-fou
+   * *dur* de la règle de budget d'attaque, symétrique de celui que `placeTower` fait déjà peser sur
+   * chaque tour côté Défense (`canPlaceTower(..., this.getRemainingBudget())`). `enforceBudget`
+   * (recherche génétique IA) et la saisie de l'UI garantissent déjà cette limite en amont, mais
+   * aucun des deux n'est un mur infranchissable au sens du moteur : c'est lui, pas ses appelants,
+   * qui doit rester la source de vérité de la règle.
+   */
   startAttackTrial(wave: Wave): DefenseSimulation {
     if (!this.map) {
       throw new Error('Run not started');
     }
     if (this.phaseState !== 'attack') {
       throw new Error('Not in attack phase');
+    }
+    if (waveCost(wave) > this.attackBudget) {
+      throw new Error('Wave exceeds attack budget');
     }
     return new DefenseSimulation(this.towers, wave, this.chateauMaxHp, undefined, undefined, undefined, 'attack');
   }
