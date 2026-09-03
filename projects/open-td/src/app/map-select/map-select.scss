@@ -9,18 +9,24 @@
 
 .map-select {
   display: grid;
-  gap: 1.5rem;
+  gap: clamp(1rem, 4vh, 1.5rem);
   max-width: 60rem;
   margin: 0 auto;
-  padding: 2.5rem 1.25rem;
+  padding: calc(var(--otd-safe-top, 0px) + clamp(1.25rem, 5vh, 2.5rem))
+    calc(var(--otd-safe-right, 0px) + 1.25rem)
+    calc(var(--otd-safe-bottom, 0px) + clamp(1.25rem, 5vh, 2.5rem))
+    calc(var(--otd-safe-left, 0px) + 1.25rem);
 }
 
 .map-select__header {
+  /* Réserve la largeur du bouton « ? » flottant (2,5rem + 1,25rem de marge, cf. app.scss),
+     sinon le titre centré passe dessous sur un écran étroit. */
+  padding-inline: 3.75rem;
   text-align: center;
 
   h1 {
     margin: 0;
-    font-size: 2rem;
+    font-size: clamp(1.5rem, 7vw, 2rem);
     letter-spacing: 0.04em;
   }
 
@@ -30,9 +36,10 @@
   }
 }
 
+/** `min(13rem, 100%)` : sous 13rem de large, une colonne plancher déborderait du viewport. */
 .map-select__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
   gap: 1rem;
 }
 
@@ -40,7 +47,7 @@
   display: grid;
   gap: 0.5rem;
   justify-items: center;
-  padding: 1.25rem 1rem;
+  padding: clamp(0.85rem, 4vw, 1.25rem) 1rem;
   border: 1px solid #2a2f3a;
   border-radius: 0.5rem;
   background: #171a22;

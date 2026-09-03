@@ -1,4 +1,8 @@
-<section class="board" [class.board--attack]="phase() === 'attack'">
+<section
+  class="board"
+  [class.board--attack]="phase() === 'attack'"
+  [class.board--rail]="layout.isRailLayout()"
+>
   <div class="board__stage">
     @if (matchOutcome(); as outcome) {
       @if (!inspectingMap()) {
@@ -7,28 +11,40 @@
           (restart)="restart.emit()"
           (inspect)="onInspectMap()"
         />
-      } @else {
+      }
+    }
+
+    <!--
+      Pile des panneaux de la bande haute (retour à l'écran de fin, loader IA, message) : un seul
+      conteneur empilé verticalement sous les contrôles de coin, plutôt que trois overlays qui se
+      positionnent chacun en `top` et finissent superposés entre eux ou sous la pastille / le ☰.
+    -->
+    <div class="board__top-stack">
+      @if (matchOutcome() && inspectingMap()) {
         <button type="button" class="board__resume-result" (click)="onResumeMatchResult()">
           Revenir à l'écran de fin de partie
         </button>
       }
-    }
-    @if (aiThinking()) {
-      <div class="board__ai-loader" aria-live="polite">
-        <span class="board__ai-spinner"></span>
-        <span>L'IA réfléchit...</span>
-        @if (showAiDebug()) {
-          @let progress = aiProgress();
-          @if (progress) {
-            <span class="board__ai-debug">
-              {{ progress.iterations }} itération{{ progress.iterations > 1 ? 's' : '' }} — score
-              {{ progress.score | number: '1.0-2' }}
-            </span>
+      @if (aiThinking()) {
+        <div class="board__ai-loader" aria-live="polite">
+          <span class="board__ai-spinner"></span>
+          <span>L'IA réfléchit...</span>
+          @if (showAiDebug()) {
+            @let progress = aiProgress();
+            @if (progress) {
+              <span class="board__ai-debug">
+                {{ progress.iterations }} itération{{ progress.iterations > 1 ? 's' : '' }} — score
+                {{ progress.score | number: '1.0-2' }}
+                @if (progress.cacheHitRate != null) {
+                  — cache {{ progress.cacheHitRate | percent: '1.0-0' }}
+                }
+              </span>
+            }
           }
-        }
-      </div>
-    }
-    <otd-board-message [fallback]="attackNoRouteHint()" />
+        </div>
+      }
+      <otd-board-message [fallback]="attackNoRouteHint()" />
+    </div>
 
     <div class="board__map">
       <div
@@ -55,10 +71,9 @@
           ></otd-tooltip>
         }
       </div>
-
-      <otd-board-status />
     </div>
 
+    <otd-board-status />
     <otd-board-hud />
   </div>
 </section>

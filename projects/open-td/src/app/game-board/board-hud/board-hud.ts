@@ -1,4 +1,16 @@
-import { ChangeDetectionStrategy, Component, computed, inject, isDevMode } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  type ElementRef,
+  Injector,
+  afterNextRender,
+  computed,
+  effect,
+  inject,
+  isDevMode,
+  viewChild,
+} from '@angular/core';
 import { TOWER_TYPES } from 'shared';
 import type { TowerType } from 'shared';
 import { Button } from '../../ui/button/button';
@@ -7,11 +19,17 @@ import { BoardDefenseService } from '../board-defense.service';
 import { BoardEngineService } from '../board-engine.service';
 import { laneDisplayLabel } from '../board-format';
 import { BoardLanesService } from '../board-lanes.service';
+import { BoardLayoutService } from '../board-layout.service';
 import { BoardMatchService } from '../board-match.service';
 import { BoardTrialService } from '../board-trial.service';
 import { LanesPanel } from '../lanes-panel/lanes-panel';
 
-/** Barre de commandes bas : outils contextuels, détail de la voie active. */
+/**
+ * Panneau de commandes flottant : docké en feuille basse en portrait, en rail latéral droit en
+ * paysage compact (`BoardLayoutService.isRailLayout`) pour ne pas dévorer la hauteur, rare dans
+ * cette orientation. Son empiètement (hauteur ou largeur selon le dock) est transmis au service
+ * de layout pour que la carte se recadre dans l'espace restant plutôt que dessous.
+ */
 @Component({
   selector: 'otd-board-hud',
   imports: [Button, LanesPanel],
@@ -26,6 +44,11 @@ export class BoardHud {
   private readonly matchService = inject(BoardMatchService);
   protected readonly defenseService = inject(BoardDefenseService);
   protected readonly lanesService = inject(BoardLanesService);
+  protected readonly layout = inject(BoardLayoutService);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+
+  private readonly panelRef = viewChild<ElementRef<HTMLElement>>('panel');
 
   protected readonly phase = this.gameState.phase;
   protected readonly trialRunning = this.trial.isRunning;
@@ -64,6 +87,25 @@ export class BoardHud {
 
   protected readonly attackBudgetRemaining = computed(() => this.budget.attack().remaining);
 
+  /**
+   * Vrai si au moins un bloc du template a du contenu. Sans ce garde, le panneau se réduit à une
+   * barre vide (bordure + fond + padding) pendant les phases sans commande — épreuve rejouée,
+   * résolution, tour de l'IA en attaque — et son empiètement continue de rogner la carte.
+   */
+  protected readonly hasContent = computed(() => {
+    if (this.pickingActive()) {
+      return true;
+    }
+    switch (this.phase()) {
+      case 'defense':
+        return !this.trialRunning();
+      case 'attack':
+        return this.drawingPath() || (!this.trialRunning() && !this.isAiAttack());
+      default:
+        return false;
+    }
+  });
+
   protected readonly towerTypes = TOWER_TYPES;
   protected readonly laneDisplayLabel = laneDisplayLabel;
 
@@ -78,5 +120,43 @@ export class BoardHud {
   protected canConfirmPlace(): boolean {
     const type = this.selectedType();
     return !this.locked() && !!type && this.isAffordable(type);
+  }
+
+  constructor() {
+    afterNextRender(() => {
+      const panel = this.panelRef()?.nativeElement;
+      if (!panel) {
+        return;
+      }
+      // Rail (paysage compact) : le panneau mord sur le bord droit → largeur. Feuille (portrait) :
+      // il mord sur le bord bas → hauteur. Un seul bord à la fois, l'autre repasse à 0.
+      const measure = () => {
+        const rail = this.layout.isRailLayout();
+        const size = rail ? panel.offsetWidth : panel.offsetHeight;
+        // Taille nulle = panneau masqué (`hasContent` faux) : plus aucun empiètement, la carte
+        // reprend toute la place au lieu de se recadrer autour d'une boîte invisible.
+        if (size === 0) {
+          this.layout.clearInset('hud');
+          return;
+        }
+        this.layout.setInset('hud', rail ? { right: size + 8 } : { bottom: size + 8 });
+      };
+      const observer = new ResizeObserver(measure);
+      observer.observe(panel);
+      const layoutEffect = effect(
+        () => {
+          // Le dock (rail/feuille) et l'affichage du panneau changent sa boîte : re-mesurer.
+          // La valeur lue en amont du rendu peut être périmée, l'observateur corrige juste après.
+          this.hasContent();
+          measure();
+        },
+        { injector: this.injector },
+      );
+      this.destroyRef.onDestroy(() => {
+        observer.disconnect();
+        layoutEffect.destroy();
+        this.layout.clearInset('hud');
+      });
+    });
   }
 }

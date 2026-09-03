@@ -2,83 +2,67 @@
   display: contents;
 }
 
-.board-status {
+.board-status__chip {
   position: absolute;
-  top: 0.5rem;
-  left: 50%;
+  top: calc(var(--otd-safe-top, 0px) + 0.5rem);
+  left: calc(var(--otd-safe-left, 0px) + 0.5rem);
   z-index: 15;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  max-width: min(28rem, calc(100% - 1rem));
-  padding: 0.45rem 0.75rem 0.6rem;
+  gap: 0.4rem;
+  max-width: min(13rem, calc(100% - 1rem));
+  padding: 0.35rem 0.6rem;
   border: 1px solid var(--phase-panel-border, #1d4a6b);
-  border-radius: 1rem;
+  border-radius: 0.9rem;
   background: var(--phase-panel-bg, rgba(20, 34, 41, 0.94));
   backdrop-filter: blur(8px);
   box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.3);
-  transform: translateX(-50%);
   pointer-events: none;
 }
 
-.board-status__row {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-}
-
-.board-status__actions {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  pointer-events: auto;
-}
-
 .board-status__icon {
-  width: 1.15rem;
-  height: 1.15rem;
+  width: 1.1rem;
+  height: 1.1rem;
   object-fit: contain;
   flex-shrink: 0;
 }
 
 .board-status__title {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   color: var(--phase-accent, #5fb0ff);
   white-space: nowrap;
-}
-
-.board-status__meta {
-  font-size: 0.75rem;
-  opacity: 0.75;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 12rem;
 }
 
 .board-status__budget {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  font-size: 0.8rem;
+  padding-left: 0.4rem;
+  border-left: 1px solid color-mix(in srgb, var(--phase-panel-border, #1d4a6b) 70%, transparent);
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--phase-accent, #5fb0ff);
   white-space: nowrap;
 }
 
 .board-status__budget-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 0.95rem;
+  height: 0.95rem;
   object-fit: contain;
   flex-shrink: 0;
 }
 
-@media (max-width: 720px) {
-  .board-status__meta {
-    display: none;
-  }
+/** Cluster d'actions flottant bas-droite (zone du pouce) ; décalé via `--extra-right/--extra-bottom` pour éviter le HUD. */
+.board-status__actions {
+  position: absolute;
+  right: calc(var(--otd-safe-right, 0px) + 0.6rem + var(--extra-right, 0px));
+  bottom: calc(var(--otd-safe-bottom, 0px) + 0.6rem + var(--extra-bottom, 0px));
+  z-index: 25;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 0.55rem;
+  transition: right 0.2s ease, bottom 0.2s ease;
 }

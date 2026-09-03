@@ -196,25 +196,21 @@ export class BoardDefenseService {
         chateauMaxHp: this.gameState.chateauMaxHp(),
         maxTime,
         onBestFound: (best, info) => this.applyTowers(best, info),
+        simulationCache: this.gameState.simulationCache,
+        existingTowers: this.gameState.towers(),
       })) ?? [];
     this.applyTowers(towers);
   }
 
   /**
-   * Remplace les tours posées par `towers` (efface les anciennes, pose les nouvelles). Publie
-   * aussi `info` (nombre d'individus notés, score du meilleur), quand fourni par `onBestFound` en
-   * cours de recherche IA, via `BoardMatchService` — pour le HUD debug.
+   * Aligne la forteresse persistante sur `towers` (suppression remboursée, poses nouvelles).
+   * Publie aussi `info` via `BoardMatchService` quand fourni par `onBestFound`.
    */
   private applyTowers(towers: readonly TowerInstance[], info?: ProgressInfo): void {
     if (info) {
       this.matchService.reportAiProgress(info);
     }
-    for (const tower of this.gameState.towers()) {
-      this.gameState.engine.deleteTower(tower.id);
-    }
-    for (const tower of towers) {
-      this.gameState.engine.placeTower(tower.typeId, tower.position);
-    }
+    this.gameState.engine.applyFortressLayout(towers);
 
     this.clearSelection();
     this.messages.set(undefined);

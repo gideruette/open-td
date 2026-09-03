@@ -194,29 +194,33 @@ export function canOccupyCell(
 }
 
 /**
- * Cases de la carte où une tour pourrait être posée sur une forteresse vierge — autrement dit les
- * emplacements dont l'adversaire dispose au palier suivant, la défense repartant d'une
- * configuration libre à chaque palier (voir `GameEngine.resetDefenseSession`). Ne dépend donc que
- * de la géométrie de la carte, ce qui permet de la mémoïser : c'est la base du calcul d'exposition
- * d'une route (`routeExposure`), qui interroge ce même ensemble pour chaque case de tracé.
+ * Cases constructibles d'après la géométrie (hors château, bords, rivières, chemins). Mémoïsé sans
+ * les tours : la forteresse persistante occupe des cases en plus, filtrées via `occupiedTowers`.
  */
 const buildableCellsByMap = new WeakMap<GameMap, Set<string>>();
 
-export function buildableCells(map: GameMap): ReadonlySet<string> {
+export function buildableCells(
+  map: GameMap,
+  occupiedTowers: readonly TowerInstance[] = [],
+): ReadonlySet<string> {
   const cached = buildableCellsByMap.get(map);
-  if (cached) {
-    return cached;
-  }
-  const cells = new Set<string>();
-  for (let x = 0; x < map.grid.cols; x++) {
-    for (let y = 0; y < map.grid.rows; y++) {
-      if (canOccupyCell(map, [], { x, y }).ok) {
-        cells.add(cellKey({ x, y }));
+  let cells = cached;
+  if (!cells) {
+    cells = new Set<string>();
+    for (let x = 0; x < map.grid.cols; x++) {
+      for (let y = 0; y < map.grid.rows; y++) {
+        if (canOccupyCell(map, [], { x, y }).ok) {
+          cells.add(cellKey({ x, y }));
+        }
       }
     }
+    buildableCellsByMap.set(map, cells);
   }
-  buildableCellsByMap.set(map, cells);
-  return cells;
+  if (occupiedTowers.length === 0) {
+    return cells;
+  }
+  const occupied = new Set(occupiedTowers.map((tower) => cellKey(tower.position)));
+  return new Set([...cells].filter((key) => !occupied.has(key)));
 }
 
 /** Règles de placement d'une tour (grille, occupation, budget). Ne mute rien. */

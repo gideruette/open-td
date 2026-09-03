@@ -1,6 +1,6 @@
 import type { GameMap, GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave } from 'shared';
 import { MONSTER_TYPES, TOWER_TYPES, hexDistance, hexNeighbors } from 'shared';
-import { phaseScore } from './combat';
+import { type SimulationCache, phaseScore, simulationCacheHitRate } from './combat';
 import { canOccupyCell, canPlaceTower, cellKey } from './fortress';
 import { type ProgressInfo, type ProgressReporter, createProgressReporter, shuffled } from './ia-player';
 import { expandPathCells } from './path';
@@ -20,6 +20,10 @@ export interface DefensePlayerInput {
   maxTime?: number;
   /** Rappelé au fil de la recherche avec la meilleure défense trouvée jusqu'ici — voir `evolveDefense`. */
   onBestFound?: (best: readonly TowerInstance[], info: ProgressInfo) => void;
+  /** Cache optionnel des résultats de simulation, partagé entre plusieurs appels — voir `evolveDefense`. */
+  simulationCache?: SimulationCache;
+  /** Forteresse déjà posée : graine du GA (déplacement gratuit, suppression remboursée). */
+  existingTowers?: readonly TowerInstance[];
 }
 
 /**
@@ -203,6 +207,14 @@ export function initRandomDefense(
     remainingBudget -= costs.get(tower.typeId) ?? 0;
   }
   return towers;
+}
+
+function cloneFortress(towers: readonly TowerInstance[]): TowerInstance[] {
+  return towers.map((tower) => ({
+    ...tower,
+    id: `ia-tower-${Math.floor(Math.random() * 1e9)}`,
+    position: { x: tower.position.x, y: tower.position.y },
+  }));
 }
 
 /**
@@ -659,8 +671,9 @@ function scoreDefense(
   map: GameMap,
   monsterCatalog: readonly MonsterType[],
   towerCatalog: readonly TowerType[],
+  simulationCache: SimulationCache | undefined,
 ): number {
-  return phaseScore(towers, wave, chateauMaxHp, map, monsterCatalog, towerCatalog, 'defense');
+  return phaseScore(towers, wave, chateauMaxHp, map, monsterCatalog, towerCatalog, 'defense', simulationCache);
 }
 
 /** Meilleure défense trouvée jusqu'ici (au sens de `scoreDefense`, score décroissant) et son score. */
@@ -691,6 +704,7 @@ async function fittestDefenses(
   reporter: ProgressReporter<readonly TowerInstance[]>,
   seed: BestDefense | undefined,
   knownScores: WeakMap<object, number>,
+  simulationCache: SimulationCache | undefined,
 ): Promise<{ population: TowerInstance[][]; best: BestDefense | undefined }> {
   const scored: BestDefense[] = [];
   let best = seed;
@@ -698,7 +712,7 @@ async function fittestDefenses(
     const known = knownScores.get(candidate);
     const towers = [...candidate];
     const score =
-      known ?? scoreDefense(towers, wave, chateauMaxHp, map, monsterCatalog, towerCatalog);
+      known ?? scoreDefense(towers, wave, chateauMaxHp, map, monsterCatalog, towerCatalog, simulationCache);
     // La copie est ce que `population` transportera jusqu'à la génération suivante : c'est donc
     // elle, et pas `candidate`, qui doit porter le score dans le cache.
     knownScores.set(towers, score);
@@ -711,7 +725,11 @@ async function fittestDefenses(
       continue;
     }
     iterations.count++;
-    await reporter.report(best.towers, { iterations: iterations.count, score: best.score });
+    await reporter.report(best.towers, {
+      iterations: iterations.count,
+      score: best.score,
+      cacheHitRate: simulationCache && simulationCacheHitRate(simulationCache),
+    });
   }
   const population = scored
     .sort((a, b) => b.score - a.score)
@@ -760,6 +778,9 @@ export async function evolveDefense(
   populationSize: number = DEFAULT_POPULATION_SIZE,
   maxTime: number = 100,
   onBestFound?: (best: readonly TowerInstance[], info: ProgressInfo) => void,
+  /** Cache optionnel des résultats de simulation — voir `evolveAttackWave`, pendant côté Attaque. */
+  simulationCache?: SimulationCache,
+  existingTowers: readonly TowerInstance[] = [],
 ): Promise<TowerInstance[]> {
   const start = Date.now();
   const iterations = { count: 0 };
@@ -776,16 +797,21 @@ export async function evolveDefense(
   // Bornée par maxTime comme la boucle principale ci-dessous : un populationSize trop ambitieux
   // pour le temps imparti dégrade la qualité plutôt que de dépasser le budget de temps.
   const initialCandidates: TowerInstance[][] = [];
+  if (existingTowers.length > 0) {
+    initialCandidates.push(
+      enforceDefenseBudget(cloneFortress(existingTowers), defenseBudget, towerCatalog, map, wave),
+    );
+  }
   while (initialCandidates.length < 2 * populationSize && Date.now() - start < maxTime) {
     // Une forteresse sur `GREEDY_SEED_PERIOD` est ensemencée sur les goulots plutôt que tirée au
     // hasard. Intercalées, et non posées en tête : le tirage étant borné par `maxTime` et une
     // forteresse gloutonne coûtant plus cher à construire, un budget de temps serré doit tout de
     // même produire un mélange des deux, pas seulement des gloutonnes.
-    initialCandidates.push(
+    const rebuild =
       initialCandidates.length % GREEDY_SEED_PERIOD === 0
         ? initGreedyDefense(map, wave, defenseBudget, towerCatalog)
-        : initRandomDefense(map, wave, defenseBudget, towerCatalog),
-    );
+        : initRandomDefense(map, wave, defenseBudget, towerCatalog);
+    initialCandidates.push(rebuild);
   }
   const initialResult = await fittestDefenses(
     initialCandidates,
@@ -799,6 +825,7 @@ export async function evolveDefense(
     reporter,
     best,
     knownScores,
+    simulationCache,
   );
   let population = initialResult.population;
   best = initialResult.best;
@@ -822,6 +849,7 @@ export async function evolveDefense(
       reporter,
       best,
       knownScores,
+      simulationCache,
     );
     population = result.population;
     best = result.best;
@@ -858,5 +886,7 @@ export async function playDefensePhase(
     OFFICIAL_POPULATION_SIZE,
     input.maxTime,
     input.onBestFound,
+    input.simulationCache,
+    input.existingTowers ?? [],
   );
 }

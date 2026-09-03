@@ -21,6 +21,8 @@ export function shuffled<T>(items: readonly T[]): T[] {
 export interface ProgressInfo {
   iterations: number;
   score: number;
+  /** Taux de hits `[0, 1]` du `simulationCache` de la recherche — `undefined` si aucun cache fourni. */
+  cacheHitRate?: number;
 }
 
 /**

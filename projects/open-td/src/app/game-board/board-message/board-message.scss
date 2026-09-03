@@ -2,8 +2,11 @@
   display: contents;
 }
 
+/** Un des panneaux empilés dans `.board__top-stack` (game-board.html/scss) : pas d'overlay propre. */
 .board-message {
-  grid-area: message;
+  pointer-events: auto;
+  width: max-content;
+  max-width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;

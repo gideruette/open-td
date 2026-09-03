@@ -1,36 +1,41 @@
-<header class="board-status" aria-live="polite">
-  <div class="board-status__row">
+<header
+  #chip
+  class="board-status__chip"
+  aria-live="polite"
+  [attr.title]="'Palier ' + palier() + ' · ' + phaseLabel()"
+>
+  <img
+    class="board-status__icon"
+    [src]="
+      phase() === 'defense'
+        ? 'assets/sprites/shield-defense.svg'
+        : 'assets/sprites/swords-attack.svg'
+    "
+    alt=""
+  />
+  <span class="board-status__title">P{{ palier() }}</span>
+  <span class="board-status__budget">
     <img
-      class="board-status__icon"
+      class="board-status__budget-icon"
       [src]="
         phase() === 'defense'
-          ? 'assets/sprites/shield-defense.svg'
-          : 'assets/sprites/swords-attack.svg'
+          ? 'assets/sprites/budget-defense.svg'
+          : 'assets/sprites/budget-attack.svg'
       "
       alt=""
     />
-    <span class="board-status__title">
-      Palier {{ palier() }} · {{ phase() === 'defense' ? 'Chevaliers' : 'Monstres' }}
-    </span>
-    <span class="board-status__budget">
-      <img
-        class="board-status__budget-icon"
-        [src]="
-          phase() === 'defense'
-            ? 'assets/sprites/budget-defense.svg'
-            : 'assets/sprites/budget-attack.svg'
-        "
-        alt=""
-      />
-      {{ budget().remaining }}/{{ budget().total }}
-    </span>
-  </div>
-
-  <div class="board-status__actions">
-    @if (resetVisible()) {
-      <otd-board-reset [label]="resetLabel()" (confirm)="onReset()" />
-    }
-    <otd-board-launch />
-    <otd-board-ai-solution />
-  </div>
+    {{ budget().remaining }}/{{ budget().total }}
+  </span>
 </header>
+
+<div
+  class="board-status__actions"
+  [style.--extra-right]="actionsOffset().right + 'px'"
+  [style.--extra-bottom]="actionsOffset().bottom + 'px'"
+>
+  @if (resetVisible()) {
+    <otd-board-reset [label]="resetLabel()" (confirm)="onReset()" />
+  }
+  <otd-board-ai-solution />
+  <otd-board-launch />
+</div>

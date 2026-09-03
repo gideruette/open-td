@@ -429,14 +429,13 @@ export class BoardLanesService {
    * que d'attendre le résultat final.
    */
   async playAiAttackTurn(maxTime: number): Promise<void> {
-    this.clearLanes();
-
     const map = this.gameState.map();
     if (!map) {
       this.refreshAttackBudget();
       return;
     }
 
+    const seed = this.gameState.engine.getAttackPlan();
     const wave = (await playAttackPhase({
       map,
       towers: this.gameState.towers(),
@@ -444,6 +443,8 @@ export class BoardLanesService {
       chateauMaxHp: this.gameState.chateauMaxHp(),
       maxTime,
       onBestFound: (best, info) => this.showBestSoFar(best, info),
+      simulationCache: this.gameState.simulationCache,
+      seedWave: seed.lanes.length > 0 ? seed : undefined,
     })) ?? { lanes: [] };
     this.applyWave(wave);
   }

@@ -15,7 +15,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { DecimalPipe } from '@angular/common';
+import { DecimalPipe, PercentPipe } from '@angular/common';
 import type { DefenseSimulation, MonsterInstance, ShotEvent } from 'engine';
 import {
   cellsBetween,
@@ -54,6 +54,7 @@ import { BoardEngineService } from './board-engine.service';
 import { formatMonsterStats, formatTowerStats } from './board-format';
 import { BoardHud } from './board-hud/board-hud';
 import { BoardLanesService } from './board-lanes.service';
+import { BoardLayoutService } from './board-layout.service';
 import { BoardLaunchService } from './board-launch.service';
 import { AI_THINK_TIME_MS, BoardMatchService } from './board-match.service';
 import { BoardMatchResult } from './board-match-result/board-match-result';
@@ -234,6 +235,16 @@ function generateDecor(map: GameMap): DecorItem[] {
   });
 }
 
+/**
+ * Signature stable du contenu de `paths` (id + nœuds), pour détecter un changement de tracé dans
+ * la clé du calque de fond (`backgroundFor`) : leur nombre seul ne suffit pas — l'IA remplace ses
+ * voies par des tracés de même nombre (souvent même id) pendant sa recherche, ce qui laissait le
+ * calque en cache afficher des chemins qui n'existent déjà plus.
+ */
+function pathsSignature(paths: readonly MapPath[]): string {
+  return paths.map((path) => `${path.id}:${path.nodes.map((n) => n.join(',')).join(';')}`).join('|');
+}
+
 /** Largeur du chemin dessiné, utilisée à la fois pour le tracé et pour caler la texture dessus. */
 const PATH_WIDTH = CELL_SIZE * 0.36;
 /** Multiplicateur de largeur appliqué à une rivière par rapport à un chemin (rendu plus large). */
@@ -317,11 +328,12 @@ interface HitEffectView {
 /** Plateau de jeu : grille + phase Défense (placement/targeting) + phase Attaque (composition/tracé/chemins). */
 @Component({
   selector: 'otd-game-board',
-  imports: [BoardHud, BoardMatchResult, BoardMessage, BoardStatus, DecimalPipe, Tooltip],
+  imports: [BoardHud, BoardMatchResult, BoardMessage, BoardStatus, DecimalPipe, PercentPipe, Tooltip],
   providers: [
     BoardBudgetService,
     BoardEngineService,
     BoardLaunchService,
+    BoardLayoutService,
     BoardMatchService,
     BoardMessageService,
     BoardTrialService,
@@ -421,6 +433,7 @@ export class GameBoard implements OnInit {
   private readonly launchService = inject(BoardLaunchService);
   private readonly messages = inject(BoardMessageService);
   private readonly matchService = inject(BoardMatchService);
+  protected readonly layout = inject(BoardLayoutService);
 
   /** Issue de la partie (vainqueur déclaré) une fois qu'une IA a échoué à trouver une solution à temps. */
   protected readonly matchOutcome = this.matchService.outcome;
@@ -548,6 +561,15 @@ export class GameBoard implements OnInit {
       });
       this.viewportResizeObserver.observe(viewport);
       this.fitCanvasToViewport();
+    });
+
+    // Les panneaux flottants (statut, HUD) empiètent sur des bords variables (feuille repliée/
+    // dépliée, rail paysage) : dès que leur empiètement change, la carte doit se re-cadrer dans
+    // le rectangle qu'il leur reste plutôt que de rester centrée dessous.
+    effect(() => {
+      this.layout.insets();
+      this.fitCanvasToViewport();
+      this.clampPan(true);
     });
 
     effect(() => {
@@ -1513,16 +1535,33 @@ export class GameBoard implements OnInit {
    * Bornes de pan sur un axe : carte centrée (± un peu de jeu pour le geste) si elle tient dans
    * le viewport, sinon bornée classiquement pour ne pas la faire sortir entièrement du cadre.
    */
-  private panBounds(viewportSize: number, scaledSize: number, margin: number): [number, number] {
-    if (scaledSize <= viewportSize) {
-      const center = (viewportSize - scaledSize) / 2;
+  /**
+   * Bornes de pan sur un axe, dans le rectangle libre `[insetStart, viewportSize - insetEnd]`
+   * (hors panneaux flottants) : carte centrée dedans si elle y tient, sinon bornée classiquement.
+   */
+  private panBounds(
+    viewportSize: number,
+    scaledSize: number,
+    margin: number,
+    insetStart: number,
+    insetEnd: number,
+  ): [number, number] {
+    const freeSize = viewportSize - insetStart - insetEnd;
+    if (scaledSize <= freeSize) {
+      const center = insetStart + (freeSize - scaledSize) / 2;
       return [center - margin, center + margin];
     }
-    return [viewportSize - scaledSize - margin, margin];
+    return [insetStart + freeSize - scaledSize - margin, insetStart + margin];
   }
 
-  /** Empêche de faire sortir entièrement la carte du viewport (et la centre si elle y tient). */
-  private clampPan(): void {
+  /**
+   * Empêche de faire sortir entièrement la carte du rectangle libre (et la centre si elle y
+   * tient). `recenter` force le centrage exact plutôt qu'un simple clamp de la valeur courante :
+   * à réserver aux changements de rectangle libre (empiètement d'un panneau, redimensionnement),
+   * où l'ancien pan n'a plus de sens — jamais aux gestes de pan/pinch en cours, sous peine de
+   * ramener la carte au centre sous le doigt de l'utilisateur.
+   */
+  private clampPan(recenter = false): void {
     const canvas = this.canvasRef()?.nativeElement;
     const viewport = this.viewportRef()?.nativeElement;
     if (!canvas || !viewport) {
@@ -1535,12 +1574,15 @@ export class GameBoard implements OnInit {
     const scaledH = canvas.offsetHeight * zoom;
     const marginX = Math.min(PAN_EDGE_MARGIN_PX, vw * 0.2);
     const marginY = Math.min(PAN_EDGE_MARGIN_PX, vh * 0.2);
+    const insets = this.layout.insets();
 
-    const [minX, maxX] = this.panBounds(vw, scaledW, marginX);
-    const [minY, maxY] = this.panBounds(vh, scaledH, marginY);
+    const [minX, maxX] = this.panBounds(vw, scaledW, marginX, insets.left, insets.right);
+    const [minY, maxY] = this.panBounds(vh, scaledH, marginY, insets.top, insets.bottom);
 
-    this.viewPanX.set(Math.min(maxX, Math.max(minX, this.viewPanX())));
-    this.viewPanY.set(Math.min(maxY, Math.max(minY, this.viewPanY())));
+    const nextX = recenter ? (minX + maxX) / 2 : Math.min(maxX, Math.max(minX, this.viewPanX()));
+    const nextY = recenter ? (minY + maxY) / 2 : Math.min(maxY, Math.max(minY, this.viewPanY()));
+    this.viewPanX.set(nextX);
+    this.viewPanY.set(nextY);
   }
 
   /** Vrai si le type de tour courant peut être posé sur `coord` (grille, occupation, budget). */
@@ -1616,8 +1658,9 @@ export class GameBoard implements OnInit {
     if (!canvas || !viewport || this.boardWidthPx <= 0 || this.boardHeightPx <= 0) {
       return;
     }
-    const availableW = viewport.clientWidth;
-    const availableH = viewport.clientHeight;
+    const insets = this.layout.insets();
+    const availableW = viewport.clientWidth - insets.left - insets.right;
+    const availableH = viewport.clientHeight - insets.top - insets.bottom;
     if (availableW <= 0 || availableH <= 0) {
       return;
     }
@@ -1684,6 +1727,7 @@ export class GameBoard implements OnInit {
       this.decor().length,
       this.pathTexture().length,
       this.riverTexture().length,
+      pathsSignature(map.paths),
     ].join('|');
     if (this.backgroundLayer && this.backgroundKey === key) {
       return this.backgroundLayer;

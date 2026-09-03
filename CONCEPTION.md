@@ -349,7 +349,7 @@ Pas de vs IA, pas de hot-seat, pas de multijoueur.
   "mapId": "forest-01",
   "startingDefenseBudget": 100,
   "startingAttackBudget": 80,
-  "budgetGrowth": { "defense": 40, "attack": 30 },
+  "budgetGrowth": { "initialMargin": 5, "marginStep": 5 },
   "initialWave": {
     "lanes": [
       {

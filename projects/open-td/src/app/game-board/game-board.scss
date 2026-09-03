@@ -10,9 +10,26 @@
   --phase-accent-dark: #1d4a6b;
   --phase-panel-bg: rgba(20, 34, 41, 0.94);
   --phase-panel-border: #1d4a6b;
-  --sheet-gap: 0.5rem;
+  /**
+   * Bande haute occupée par les contrôles de coin : pastille de palier/budget à gauche
+   * (`board-status`) et bouton ☰ à droite (`.shell__header`, 2,2rem + 2 × 0,6rem de padding).
+   * Tout panneau centré en haut (loader IA, message, retour à l'écran de fin) démarre en dessous,
+   * sinon il passe sous ces deux contrôles, qui sont au-dessus de lui dans l'ordre d'empilement.
+   */
+  --otd-top-band: calc(var(--otd-safe-top, 0px) + 3.6rem);
+  /**
+   * Largeur du rail latéral du HUD en paysage compact. Définie ici et consommée par
+   * `board-hud.scss` (héritée via la cascade) pour que la bande haute puisse réserver la même
+   * place : sans cela, un message centré sur tout le plateau glisse sous le rail.
+   */
+  --otd-rail-width: min(46vw, 21rem);
+  --otd-rail-reserve: 0px;
   height: 100%;
   min-height: 0;
+
+  &--rail {
+    --otd-rail-reserve: calc(var(--otd-rail-width) + 1rem);
+  }
 
   &--attack {
     --phase-accent: #ffe08c;
@@ -23,21 +40,20 @@
 }
 
 .board__stage {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    'message'
-    'map'
-    'hud';
-  gap: var(--sheet-gap);
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
+/**
+ * Plein cadre : la carte occupe tout le stage, les panneaux (statut, HUD) flottent par-dessus en
+ * overlays. `fitCanvasToViewport`/`clampPan` (game-board.ts) évitent leur empiètement via
+ * `BoardLayoutService.insets()` plutôt que de réserver une ligne de grille qui rognerait la carte.
+ */
 .board__map {
-  grid-area: map;
-  position: relative;
+  position: absolute;
+  inset: 0;
   isolation: isolate;
   min-height: 0;
   overflow: hidden;
@@ -79,13 +95,32 @@
   pointer-events: none;
 }
 
+/**
+ * Bande haute : centrée sous les contrôles de coin, les panneaux s'y empilent verticalement.
+ * `pointer-events: none` pour laisser passer le pan/zoom de la carte dessous ; chaque contrôle
+ * cliquable de la pile les réactive pour lui-même.
+ */
+.board__top-stack {
+  position: absolute;
+  top: var(--otd-top-band);
+  /* Centré sur la zone libre : en paysage compact, décalé de la moitié du rail qu'il évite. */
+  left: calc(50% - var(--otd-rail-reserve) / 2);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: max-content;
+  max-width: calc(100% - var(--otd-rail-reserve) - 1.5rem);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 /** Bouton flottant permettant de revenir à l'écran de fin de partie après avoir inspecté la carte. */
 .board__resume-result {
-  position: absolute;
-  top: 0.5rem;
-  left: 50%;
-  z-index: 30;
+  max-width: 100%;
   padding: 0.45rem 0.9rem;
+  pointer-events: auto;
   border: 1px solid var(--phase-panel-border, #1d4a6b);
   border-radius: 1rem;
   background: var(--phase-panel-bg, rgba(20, 34, 41, 0.94));
@@ -97,7 +132,6 @@
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
-  transform: translateX(-50%);
 
   &:hover {
     border-color: var(--phase-accent, #5fb0ff);
@@ -106,13 +140,11 @@
 
 /** Loader affiché pendant le tour de l'IA : évite le clignotement d'un changement de phase brutal. */
 .board__ai-loader {
-  position: absolute;
-  top: 0.5rem;
-  left: 50%;
-  z-index: 40;
+  max-width: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: center;
   gap: 0.3rem 0.5rem;
   padding: 0.45rem 0.9rem;
   border: 1px solid var(--phase-panel-border, #1d4a6b);
@@ -124,13 +156,14 @@
   font-size: 0.85rem;
   font-weight: 700;
   white-space: nowrap;
-  transform: translateX(-50%);
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 /** Debug (`isDevMode()`) : nombre d'individus notés / score du meilleur trouvé jusqu'ici, sous le libellé du loader. */
 .board__ai-debug {
   flex-basis: 100%;
+  // Sous `max-width`, la ligne de debug est la seule assez longue pour déborder : elle se replie.
+  white-space: normal;
   color: color-mix(in srgb, var(--phase-accent, #5fb0ff) 70%, white 30%);
   font-size: 0.72rem;
   font-weight: 500;

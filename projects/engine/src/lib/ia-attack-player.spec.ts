@@ -188,4 +188,22 @@ describe('evolveAttackWave', () => {
     // pas être meilleur que le résultat final.
     expect(seenScores[seenScores.length - 1]).toBeGreaterThanOrEqual(evolvedScore);
   });
+
+  it('accepte une vague graine sans dépasser le budget', async () => {
+    const seed = initRandomWave(map, [], 40, [gobelin], 2);
+    const evolved = await evolveAttackWave(
+      map,
+      [],
+      80,
+      50,
+      [gobelin],
+      3,
+      8,
+      200,
+      undefined,
+      undefined,
+      seed,
+    );
+    expect(waveCost(evolved, [gobelin])).toBeLessThanOrEqual(80);
+  });
 });

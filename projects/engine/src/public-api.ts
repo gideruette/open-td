@@ -9,4 +9,3 @@ export * from './lib/path';
 export * from './lib/ia-player';
 export * from './lib/ia-attack-player';
 export * from './lib/ia-defense-player';
-export * from './lib/balance-harness';

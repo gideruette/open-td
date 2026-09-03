@@ -25,7 +25,9 @@ export class GameEngine {
   private palier = 1;
   private defenseBudget = 0;
   private attackBudget = 0;
-  private budgetGrowth: BudgetGrowth = { defense: 0, attack: 0 };
+  private budgetGrowth: BudgetGrowth = { initialMargin: 0, marginStep: 0 };
+  /** Marge de la PROCHAINE relance (voir `BudgetGrowth`) ; grandit de `marginStep` à chaque relance. */
+  private nextMargin = 0;
   private chateauMaxHp = 0;
   private vagueCourante: Wave | undefined;
   private towers: TowerInstance[] = [];
@@ -52,6 +54,7 @@ export class GameEngine {
     this.defenseBudget = startingData.startingDefenseBudget;
     this.attackBudget = startingData.startingAttackBudget;
     this.budgetGrowth = startingData.budgetGrowth;
+    this.nextMargin = startingData.budgetGrowth.initialMargin;
     this.chateauMaxHp = startingData.chateauHp;
     this.vagueCourante = undefined;
     this.towers = [];
@@ -271,12 +274,18 @@ export class GameEngine {
    * Défense réussie : la forteresse est figée, passage en phase Attaque. Les voies de l'attaque
    * précédente sont défaites de la carte (`releaseWaveRoutes`) : le terrain qu'elles occupaient
    * redevient constructible, l'attaquant devant repayer son tracé sur son budget à ce palier.
+   *
+   * Relance réciproque (`BudgetGrowth`) : le budget d'attaque du prochain palier dépasse le budget
+   * de défense qui vient de tenir, de la marge courante — qui grandit ensuite de `marginStep` pour
+   * la prochaine relance (côté Attaque cette fois, dans `resolveAttackSuccess`).
    */
   resolveDefenseSuccess(): void {
     if (this.phaseState !== 'defense') {
       return;
     }
     this.releaseWaveRoutes();
+    this.attackBudget = this.defenseBudget + this.nextMargin;
+    this.nextMargin += this.budgetGrowth.marginStep;
     this.phaseState = 'attack';
   }
 
@@ -371,8 +380,18 @@ export class GameEngine {
 
   /**
    * Attaque réussie : la vague jouée devient vagueCourante, ses voies se figent sur la carte
-   * (`persistWaveRoutes`), le palier monte, les deux budgets augmentent, retour en phase Défense
-   * (CONCEPTION.md §6).
+   * (`persistWaveRoutes`), le palier monte, retour en phase Défense (CONCEPTION.md §6).
+   *
+   * Relance réciproque (`BudgetGrowth`) : le budget de défense du prochain palier dépasse le budget
+   * d'attaque qui vient de percer, de la marge courante — qui grandit ensuite de `marginStep` pour
+   * la prochaine relance (côté Défense la fois suivante, dans `resolveDefenseSuccess`).
+   *
+   * `this.palier === 1` (tout premier succès d'attaque, palier 1 → 2) est le seul cas où la
+   * défense ne relance PAS : `defenseBudget` reste au seed `startingDefenseBudget` posé par
+   * `startRun` — la valeur mesurée par l'étage B du plan de ré-équilibrage pour que le tout premier
+   * palier de défense (jamais encore joué, donc jamais encore « relancé ») reste gagnable. La
+   * relance ne prend le relais qu'à partir de la défense suivante, une fois ce premier budget
+   * validé consommé.
    */
   resolveAttackSuccess(wave: Wave): void {
     if (this.phaseState !== 'attack') {
@@ -381,9 +400,11 @@ export class GameEngine {
     this.persistWaveRoutes(wave);
     this.vagueCourante = wave;
     this.savedAttackPlan = wave;
+    if (this.palier > 1) {
+      this.defenseBudget = this.attackBudget + this.nextMargin;
+      this.nextMargin += this.budgetGrowth.marginStep;
+    }
     this.palier += 1;
-    this.defenseBudget += this.budgetGrowth.defense;
-    this.attackBudget += this.budgetGrowth.attack;
     this.phaseState = 'defense';
   }
 }

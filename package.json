@@ -14,9 +14,7 @@
     "watch": "ng build open-td --watch --configuration development",
     "test": "ng test open-td",
     "test:engine": "ng test engine",
-    "test:shared": "ng test shared",
-    "prebalance": "ng build shared && ng build engine",
-    "balance": "node --import ./scripts/register-workspace.mjs ./scripts/balance-campaign.mjs"
+    "test:shared": "ng test shared"
   },
   "private": true,
   "packageManager": "npm@11.18.0",

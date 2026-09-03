@@ -3,19 +3,33 @@
   inset: 0;
   // Doit rester au-dessus du HUD inférieur (z-index: 25, cf. board-hud.scss), sinon le HUD masque la popup.
   z-index: 30;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--otd-safe-top, 0px) + 1rem) calc(var(--otd-safe-right, 0px) + 1rem)
+    calc(var(--otd-safe-bottom, 0px) + 1rem) calc(var(--otd-safe-left, 0px) + 1rem);
   background: rgba(6, 10, 16, 0.72);
   backdrop-filter: blur(4px);
 }
 
+/**
+ * Transparent au layout pour que le panneau soit lui-même la case de la grille de l'hôte : ses
+ * pourcentages de taille se résolvent alors sur la hauteur du plateau, connue, plutôt que sur ce
+ * conteneur de hauteur automatique.
+ */
+.board-match-result {
+  display: contents;
+}
+
+/** Le panneau défile plutôt que de déborder : en paysage téléphone il dépasse la hauteur libre. */
 .board-match-result__panel {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
-  padding: 2rem 2.5rem;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: clamp(1rem, 5vw, 2rem) clamp(1rem, 6vw, 2.5rem);
   border: 1px solid var(--phase-panel-border, #1d4a6b);
   border-radius: 0.75rem;
   background: var(--phase-panel-bg, rgba(20, 34, 41, 0.96));
@@ -43,6 +57,8 @@
 
 .board-match-result__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 0.5rem;
   margin-top: 0.25rem;
 }

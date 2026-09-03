@@ -3,7 +3,19 @@
     <main class="shell">
       <header class="shell__header">
         <h1>{{ title() }}</h1>
-        <div class="shell__header-actions">
+        <button
+          type="button"
+          class="shell__menu-toggle"
+          aria-label="Menu"
+          [attr.aria-expanded]="menuOpen()"
+          (click)="toggleMenu()"
+        >
+          ☰
+        </button>
+        @if (menuOpen()) {
+          <div class="shell__menu-backdrop" (click)="menuOpen.set(false)"></div>
+        }
+        <div class="shell__header-actions" [class.shell__header-actions--open]="menuOpen()">
           <button type="button" class="shell__help" aria-label="Règles du jeu" (click)="openHelp()">
             ?
           </button>

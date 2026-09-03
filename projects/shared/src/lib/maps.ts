@@ -73,13 +73,26 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       chateau: { x: 8, y: 6 },
       spawns: [],
       paths: [],
-      rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 6], [15, 11]] }],
+      rivers: [
+        {
+          id: 'riviere',
+          nodes: [
+            [6, 0],
+            [8, 6],
+            [15, 11],
+          ],
+        },
+      ],
     },
     startingData: {
       mapId: 'clairiere-02',
-      startingDefenseBudget: 140,
-      startingAttackBudget: 100,
-      budgetGrowth: { defense: 60, attack: 40 },
+      // Étage F du plan de ré-équilibrage (session balance) : validé à 200 parties/valeur —
+      // 140 ne tient le palier 1 qu'à 77% (n=200), 160 à 92% (le seuil >90% visé, cf.
+      // artifacts/etage-f-budget-sweep-large/report.txt). 140 venait d'un balayage à n=20/valeur,
+      // trop peu d'échantillons pour ce jeu (bruit déjà documenté ailleurs dans ce même fichier).
+      startingDefenseBudget: 160,
+      startingAttackBudget: 80,
+      budgetGrowth: { initialMargin: 5, marginStep: 5 },
       chateauHp: 5,
     },
   },
@@ -95,13 +108,26 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       chateau: { x: 16, y: 12 },
       spawns: [],
       paths: [],
-      rivers: [{ id: 'riviere', nodes: [[6, 0], [8, 9], [16, 12], [23, 9], [30, 0]] }],
+      rivers: [
+        {
+          id: 'riviere',
+          nodes: [
+            [6, 0],
+            [8, 9],
+            [16, 12],
+            [23, 9],
+            [30, 0],
+          ],
+        },
+      ],
     },
     startingData: {
       mapId: 'forest-01',
       startingDefenseBudget: 120,
-      startingAttackBudget: 100,
-      budgetGrowth: { defense: 80, attack: 60 },
+      startingAttackBudget: 80,
+      // Placeholder proportionnel au seed clairiere-02 — pas encore rééquilibrée à son tour
+      // (l'étage F ne valide que clairiere-02 cette session, cf. CONCEPTION.md §8).
+      budgetGrowth: { initialMargin: 5, marginStep: 5 },
       chateauHp: 5,
     },
   },
@@ -117,13 +143,24 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       chateau: { x: 12, y: 9 },
       spawns: [],
       paths: [],
-      rivers: [{ id: 'riviere', nodes: [[12, 0], [10, 6], [12, 9], [6, 17]] }],
+      rivers: [
+        {
+          id: 'riviere',
+          nodes: [
+            [12, 0],
+            [10, 6],
+            [12, 9],
+            [6, 17],
+          ],
+        },
+      ],
     },
     startingData: {
       mapId: 'marais-03',
       startingDefenseBudget: 260,
-      startingAttackBudget: 200,
-      budgetGrowth: { defense: 90, attack: 70 },
+      startingAttackBudget: 160,
+      // Placeholder proportionnel au seed clairiere-02 — pas encore rééquilibrée à son tour.
+      budgetGrowth: { initialMargin: 10, marginStep: 10 },
       chateauHp: 6,
     },
   },
@@ -139,13 +176,22 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       chateau: { x: 24, y: 8 },
       spawns: [],
       paths: [],
-      rivers: [{ id: 'riviere', nodes: [[24, 0], [24, 14]] }],
+      rivers: [
+        {
+          id: 'riviere',
+          nodes: [
+            [24, 0],
+            [24, 14],
+          ],
+        },
+      ],
     },
     startingData: {
       mapId: 'toundra-05',
       startingDefenseBudget: 280,
-      startingAttackBudget: 220,
-      budgetGrowth: { defense: 100, attack: 80 },
+      startingAttackBudget: 175,
+      // Placeholder proportionnel au seed clairiere-02 — pas encore rééquilibrée à son tour.
+      budgetGrowth: { initialMargin: 11, marginStep: 11 },
       chateauHp: 6,
     },
   },
@@ -162,14 +208,26 @@ export const MAP_CATALOG: readonly MapCatalogEntry[] = [
       spawns: [],
       paths: [],
       rivers: [
-        { id: 'riviere', nodes: [[0, 0], [6, 8], [5, 10], [20, 15], [23, 14], [28, 20], [20, 29]] },
+        {
+          id: 'riviere',
+          nodes: [
+            [0, 0],
+            [6, 8],
+            [5, 10],
+            [20, 15],
+            [23, 14],
+            [28, 20],
+            [20, 29],
+          ],
+        },
       ],
     },
     startingData: {
       mapId: 'montagne-04',
       startingDefenseBudget: 320,
-      startingAttackBudget: 240,
-      budgetGrowth: { defense: 100, attack: 80 },
+      startingAttackBudget: 190,
+      // Placeholder proportionnel au seed clairiere-02 — pas encore rééquilibrée à son tour.
+      budgetGrowth: { initialMargin: 12, marginStep: 12 },
       chateauHp: 7,
     },
   },

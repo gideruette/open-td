@@ -29,7 +29,7 @@ function makeStartingData(overrides: Partial<StartingData> = {}): StartingData {
     mapId: 'test-map',
     startingDefenseBudget: 100,
     startingAttackBudget: 80,
-    budgetGrowth: { defense: 40, attack: 30 },
+    budgetGrowth: { initialMargin: 40, marginStep: 30 },
     chateauHp: 100,
     ...overrides,
   };
@@ -38,12 +38,15 @@ function makeStartingData(overrides: Partial<StartingData> = {}): StartingData {
 /**
  * Démarre une run et l'amène en phase Défense (palier 2) via une première phase Attaque jouée
  * contre une forteresse vide — reproduit le déroulé réel du jeu : plus de vague pré-construite,
- * le palier 1 est une vraie phase Attaque (CONCEPTION.md §3). `budgetGrowth` est neutralisée par
- * défaut pour que les budgets de test restent lisibles (égaux à `startingXBudget`) ; à surcharger
- * explicitement dans les tests qui portent sur la croissance des budgets.
+ * le palier 1 est une vraie phase Attaque (CONCEPTION.md §3). `budgetGrowth` est neutralisée
+ * (marge nulle) par défaut : `defenseBudget` reste au seed `startingDefenseBudget` pour ce tout
+ * premier palier (le seul jamais lu sans relance, cf. `GameEngine.resolveAttackSuccess`) ; à
+ * surcharger explicitement dans les tests qui portent sur la relance des budgets — auquel cas
+ * penser en termes de « quel budget alimente l'AUTRE camp au prochain tour », pas de croissance
+ * indépendante par camp (voir `BudgetGrowth`).
  */
 function startInDefense(engine: GameEngine, overrides: Partial<StartingData> = {}): void {
-  engine.startRun(map, makeStartingData({ budgetGrowth: { defense: 0, attack: 0 }, ...overrides }));
+  engine.startRun(map, makeStartingData({ budgetGrowth: { initialMargin: 0, marginStep: 0 }, ...overrides }));
   engine.resolveAttackSuccess(wave(lane([])));
 }
 
@@ -337,7 +340,7 @@ describe('GameEngine', () => {
 
     it('keeps towers across a full defense → attack → defense cycle', () => {
       const engine = new GameEngine();
-      startInDefense(engine, { startingDefenseBudget: 200, budgetGrowth: { defense: 40, attack: 30 } });
+      startInDefense(engine, { startingDefenseBudget: 200, budgetGrowth: { initialMargin: 40, marginStep: 10 } });
       engine.placeTower('archer', { x: 1, y: 1 });
       const id = engine.getTowers()[0].id;
       engine.resolveDefenseSuccess();
@@ -425,7 +428,7 @@ describe('GameEngine', () => {
   });
 
   describe('phase alternation', () => {
-    it('resolves the initial attack and moves to the defense phase, raising the palier and growing budgets', () => {
+    it('resolves the initial attack and moves to the defense phase, without relance on this very first transition', () => {
       const engine = new GameEngine();
       engine.startRun(map, makeStartingData());
 
@@ -433,8 +436,10 @@ describe('GameEngine', () => {
 
       expect(engine.getPhase()).toBe('defense');
       expect(engine.getPalier()).toBe(2);
-      expect(engine.getDefenseBudget()).toBe(140); // 100 + 40 growth
-      expect(engine.getAttackBudget()).toBe(110); // 80 + 30 growth
+      // Palier 1 -> 2 est le seul cas sans relance (voir `resolveAttackSuccess`) : le tout premier
+      // palier de défense joue sur son propre seed, jamais encore consommé par une relance.
+      expect(engine.getDefenseBudget()).toBe(100); // startingDefenseBudget, inchangé
+      expect(engine.getAttackBudget()).toBe(80); // startingAttackBudget, inchangé (pas encore relancé)
     });
 
     it('locks the fortress and moves to the attack phase on defense success', () => {
@@ -476,7 +481,11 @@ describe('GameEngine', () => {
 
     it('throws when the composed wave costs more than the attack budget', () => {
       const engine = new GameEngine();
-      startInDefense(engine, { startingAttackBudget: 20 });
+      // `startingDefenseBudget`, pas `startingAttackBudget` : après `resolveDefenseSuccess()`, le
+      // budget d'attaque relance sur le DERNIER budget de défense (+ marge nulle, neutralisée par
+      // `startInDefense`) — c'est donc `startingDefenseBudget` qui pilote le budget d'attaque
+      // effectivement utilisé ici, pas son propre seed (déjà consommé par le palier 1).
+      startInDefense(engine, { startingDefenseBudget: 20 });
       engine.resolveDefenseSuccess();
 
       // orc cost 12 (shared/monsters.ts): three of them, plus the route, is well past a budget of 20.
@@ -485,19 +494,24 @@ describe('GameEngine', () => {
       expect(() => engine.startAttackTrial(tooExpensive)).toThrow();
     });
 
-    it('replaces vagueCourante, raises the palier and grows both budgets on attack success', () => {
+    it('replaces vagueCourante, raises the palier and relances both budgets on attack success', () => {
       const engine = new GameEngine();
-      startInDefense(engine, { budgetGrowth: { defense: 40, attack: 30 } });
+      startInDefense(engine, { budgetGrowth: { initialMargin: 40, marginStep: 10 } });
+      // defenseBudget stays at its seed (100) through the bootstrap attack (palier 1 -> 2, no
+      // relance on this very first transition) — resolveDefenseSuccess is the first real relance.
       engine.resolveDefenseSuccess();
+      // attackBudget = defenseBudget(100) + margin(40) = 140 ; margin grows to 40 + 10 = 50.
+      expect(engine.getAttackBudget()).toBe(140);
 
       const composedWave = wave(lane([{ type: 'orc' }]));
       engine.resolveAttackSuccess(composedWave);
 
       expect(engine.getVagueCourante()).toEqual(composedWave);
       expect(engine.getPalier()).toBe(3); // 1 (bootstrap attack) -> 2 (defense) -> 3
-      // Growth applies once at the bootstrap attack (palier 1 -> 2) and once more here (2 -> 3).
-      expect(engine.getRemainingBudget()).toBe(180); // 100 + 40 + 40
-      expect(engine.getAttackBudget()).toBe(140); // 80 + 30 + 30
+      // defenseBudget = attackBudget(140) + margin(50, grown from 40) = 190 : the margin used here
+      // is bigger than the one that produced 140, exactly the "growing margin" relance mechanic.
+      expect(engine.getRemainingBudget()).toBe(190);
+      expect(engine.getAttackBudget()).toBe(140); // unchanged since the last relance above
       expect(engine.getPhase()).toBe('defense');
     });
 
@@ -670,14 +684,43 @@ describe('GameEngine', () => {
       expect(engine.getRemainingBudget()).toBe(100 - findTowerType('archer')!.cost);
     });
 
-    it('grows after an attack success, alongside the remaining budget', () => {
+    it('relances after an attack success, alongside the remaining budget', () => {
       const engine = new GameEngine();
-      startInDefense(engine, { startingDefenseBudget: 100, budgetGrowth: { defense: 40, attack: 30 } });
-      engine.resolveDefenseSuccess();
+      startInDefense(engine, { startingDefenseBudget: 100, budgetGrowth: { initialMargin: 40, marginStep: 10 } });
+      engine.resolveDefenseSuccess(); // attackBudget = defenseBudget(100) + margin(40) = 140
       engine.resolveAttackSuccess(wave(lane([{ type: 'orc' }])));
 
-      // Growth applies once at the bootstrap attack (palier 1 -> 2) and once more here (2 -> 3).
-      expect(engine.getDefenseBudget()).toBe(180); // 100 + 40 + 40
+      // defenseBudget = attackBudget(140) + margin(50, grown from 40 by marginStep) = 190.
+      expect(engine.getDefenseBudget()).toBe(190);
+    });
+  });
+
+  describe('budget relance (BudgetGrowth)', () => {
+    it('reproduces the exact reciprocal relance sequence over several cycles, margin growing each time', () => {
+      const engine = new GameEngine();
+      engine.startRun(
+        map,
+        makeStartingData({
+          startingAttackBudget: 10,
+          startingDefenseBudget: 100,
+          budgetGrowth: { initialMargin: 5, marginStep: 5 },
+        }),
+      );
+
+      engine.resolveAttackSuccess(wave(lane([]))); // palier 1 -> 2 : pas de relance, seed inchangé
+      expect(engine.getDefenseBudget()).toBe(100);
+
+      engine.resolveDefenseSuccess(); // attaque relance : 100 + margin(5)
+      expect(engine.getAttackBudget()).toBe(105);
+
+      engine.resolveAttackSuccess(wave(lane([]))); // défense relance : 105 + margin(10, 5+5)
+      expect(engine.getDefenseBudget()).toBe(115);
+
+      engine.resolveDefenseSuccess(); // attaque relance : 115 + margin(15, 10+5)
+      expect(engine.getAttackBudget()).toBe(130);
+
+      engine.resolveAttackSuccess(wave(lane([]))); // défense relance : 130 + margin(20, 15+5)
+      expect(engine.getDefenseBudget()).toBe(150);
     });
   });
 });

@@ -167,6 +167,26 @@ describe('evolveDefense', () => {
     expect(totalCost).toBeLessThanOrEqual(defenseBudget);
   });
 
+  it('réinvestit une forteresse héritée sans dépasser le budget brut', async () => {
+    const wave = waveOf(laneOf([{ type: 'gobelin' }, { type: 'gobelin' }]));
+    const seed = initRandomDefense(map, wave, 20, [archer]);
+    expect(seed.length).toBeGreaterThan(0);
+    const towers = await evolveDefense(
+      map,
+      wave,
+      60,
+      100,
+      [gobelin],
+      [archer],
+      8,
+      200,
+      undefined,
+      undefined,
+      seed,
+    );
+    expect(towers.length * archer.cost).toBeLessThanOrEqual(60);
+  });
+
   it('rappelle onBestFound à la fin de chaque génération avec la meilleure défense trouvée jusqu\'ici', async () => {
     const wave = waveOf(laneOf([{ type: 'gobelin' }, { type: 'gobelin' }, { type: 'gobelin' }]));
     const seenScores: number[] = [];

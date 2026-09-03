@@ -19,7 +19,7 @@ import {
   routeThroughWaypoints,
   simplifyPathCells,
 } from './path';
-import { phaseScore, waveCost } from './combat';
+import { type SimulationCache, phaseScore, simulationCacheHitRate, waveCost } from './combat';
 
 /**
  * Entrées nécessaires pour faire jouer l'ordinateur la phase Attaque : la carte (spawns +
@@ -37,6 +37,10 @@ export interface AttackPlayerInput {
   maxTime?: number;
   /** Rappelé au fil de la recherche avec la meilleure vague trouvée jusqu'ici — voir `evolveAttackWave`. */
   onBestFound?: (best: Wave, info: ProgressInfo) => void;
+  /** Cache optionnel des résultats de simulation, partagé entre plusieurs appels — voir `evolveAttackWave`. */
+  simulationCache?: SimulationCache;
+  /** Plan d'attaque du cycle précédent : candidat initial, recomposition complète toujours possible. */
+  seedWave?: Wave;
 }
 
 /** Toutes les cases de bord de la carte, hors château : positions valides pour un nouveau spawn. */
@@ -317,8 +321,9 @@ function scoreAttackWave(
   chateauMaxHp: number,
   map: GameMap,
   monsterCatalog: readonly MonsterType[],
+  simulationCache: SimulationCache | undefined,
 ): number {
-  return phaseScore(towers, wave, chateauMaxHp, map, monsterCatalog, undefined, 'attack');
+  return phaseScore(towers, wave, chateauMaxHp, map, monsterCatalog, undefined, 'attack', simulationCache);
 }
 
 /** Meilleure vague trouvée jusqu'ici (au sens de `scoreAttackWave`, score croissant) et son score. */
@@ -352,12 +357,13 @@ async function fittestWaves(
   reporter: ProgressReporter<Wave>,
   seed: BestWave | undefined,
   knownScores: WeakMap<Wave, number>,
+  simulationCache: SimulationCache | undefined,
 ): Promise<{ population: Wave[]; best: BestWave | undefined }> {
   const scored: BestWave[] = [];
   let best = seed;
   for (const wave of waves) {
     const known = knownScores.get(wave);
-    const score = known ?? scoreAttackWave(wave, towers, chateauMaxHp, map, monsterCatalog);
+    const score = known ?? scoreAttackWave(wave, towers, chateauMaxHp, map, monsterCatalog, simulationCache);
     scored.push({ wave, score });
     if (!best || score < best.score) {
       best = { wave, score };
@@ -368,7 +374,11 @@ async function fittestWaves(
     }
     knownScores.set(wave, score);
     iterations.count++;
-    await reporter.report(best.wave, { iterations: iterations.count, score: best.score });
+    await reporter.report(best.wave, {
+      iterations: iterations.count,
+      score: best.score,
+      cacheHitRate: simulationCache && simulationCacheHitRate(simulationCache),
+    });
   }
   const population = scored
     .sort((a, b) => a.score - b.score)
@@ -809,6 +819,13 @@ export async function evolveAttackWave(
   populationSize: number = DEFAULT_POPULATION_SIZE,
   maxTime: number = 100,
   onBestFound?: (best: Wave, info: ProgressInfo) => void,
+  /**
+   * Cache optionnel des résultats de simulation (cf. `SimulationCache` dans `combat.ts`), partagé
+   * par l'appelant à travers plusieurs appels (ex. plusieurs paliers/parties d'une campagne
+   * d'équilibre) — jamais alloué ici, une recherche isolée n'a personne avec qui partager.
+   */
+  simulationCache?: SimulationCache,
+  seedWave?: Wave,
 ): Promise<Wave> {
   const start = Date.now();
   const iterations = { count: 0 };
@@ -830,6 +847,9 @@ export async function evolveAttackWave(
     affordableLaneCap(map, attackBudget, monsterCatalog),
   );
   const initialCandidates: Wave[] = [];
+  if (seedWave && seedWave.lanes.length > 0) {
+    initialCandidates.push(enforceBudget({ lanes: cloneLanes(seedWave) }, attackBudget, monsterCatalog));
+  }
   while (initialCandidates.length < 2 * populationSize && Date.now() - start < maxTime) {
     initialCandidates.push(
       initRandomWave(map, towers, attackBudget, monsterCatalog, effectiveMaxLanes),
@@ -846,6 +866,7 @@ export async function evolveAttackWave(
     reporter,
     best,
     knownScores,
+    simulationCache,
   );
   let population = initialResult.population;
   best = initialResult.best;
@@ -868,6 +889,7 @@ export async function evolveAttackWave(
       reporter,
       best,
       knownScores,
+      simulationCache,
     );
     population = result.population;
     best = result.best;
@@ -902,5 +924,7 @@ export async function playAttackPhase(input: AttackPlayerInput): Promise<Wave | 
     OFFICIAL_POPULATION_SIZE,
     input.maxTime,
     input.onBestFound,
+    input.simulationCache,
+    input.seedWave,
   );
 }

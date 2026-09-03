@@ -600,19 +600,21 @@ const SPREAD_SCORE_BASE = 1_000_000;
  * l'attaquant gagne, et les voies s'en protègent mutuellement : une voie parallèle à une autre
  * retire à sa voisine des emplacements de tour, donc abaisse son exposition.
  *
- * La défense repartant d'une forteresse libre à chaque palier, les tours actuellement posées
- * n'entrent pas dans le calcul : ce sont bien les emplacements *potentiels* qui comptent.
+ * Les tours déjà posées (forteresse persistante) occupent des cases : elles ne sont plus des
+ * emplacements *nouveaux*, mais leur feu compte déjà. Passer `existingTowers` pour en tenir compte.
  */
 export function routeExposure(
   map: GameMap,
   wave: Wave,
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
+  existingTowers: readonly TowerInstance[] = [],
 ): number {
   const range = towerCatalog.reduce((max, type) => Math.max(max, type.range), 0);
   if (range <= 0 || wave.lanes.length === 0) {
     return 0;
   }
-  const buildable = buildableCells(map);
+  const buildable = buildableCells(map, existingTowers);
+  const typeById = new Map(towerCatalog.map((type) => [type.id, type]));
 
   const laneCells = wave.lanes.map((lane) => expandPathCells(lane.path));
   const takenByWave = new Set<string>();
@@ -631,6 +633,12 @@ export function routeExposure(
         continue;
       }
       counted.add(`${cell.x},${cell.y}`);
+      for (const tower of existingTowers) {
+        const type = typeById.get(tower.typeId);
+        if (type && hexDistance(tower.position, cell) <= type.range) {
+          exposure++;
+        }
+      }
       // Fenêtre bornée à la grille : une portée démesurée ne doit pas faire balayer le vide.
       const minX = Math.max(0, cell.x - range);
       const maxX = Math.min(map.grid.cols - 1, cell.x + range);
@@ -965,6 +973,152 @@ function totalMonsterHp(wave: Wave, monsterCatalog: readonly MonsterType[]): num
   );
 }
 
+/** Résultat figé d'une simulation, pour pouvoir le renvoyer depuis un cache sans instance vivante. */
+export interface SimulationSnapshot {
+  outcome: 'success' | 'failure';
+  breachCount: number;
+  chateauHp: number;
+  tick: number;
+  totalDamageDealt: number;
+}
+
+/**
+ * Cache de résultats de simulation, clé par l'état CONCRET (tours, vague, PV château, mode) —
+ * jamais par la décision de l'IA qui l'a produit (non-déterministe d'un run à l'autre, cf.
+ * `knownScores` dans `ia-attack-player.ts`/`ia-defense-player.ts`, qui ne couvre que les doublons
+ * PAR IDENTITÉ D'OBJET au sein d'une même recherche, pas les répétitions de CONTENU entre deux
+ * recherches distinctes). Valide : `DefenseSimulation` est une fonction pure de ces 4 valeurs (pas
+ * de hasard, pas de lecture de `map` — chaque voie porte son propre tracé) TANT QUE le catalogue
+ * tours/monstres et `ticksBetweenSpawns` ne changent pas pendant la vie du cache : à l'appelant de
+ * le garantir (ex. un cache par process, jamais réutilisé après un changement de catalogue).
+ *
+ * L'ordre des tours et des voies n'entre PAS dans la clé (triés avant hachage) : vérifié dans
+ * `fireTowers`/`spawn` que ni l'un ni l'autre n'affecte le résultat — `pickTarget` ne regarde que
+ * la géométrie figée (distance/portée), jamais les PV (un monstre déjà à 0 PV pendant la passe
+ * reste ciblable, le surplus compte dans `totalDamageDealt` — voir la note sur `fireTowers`), et
+ * chaque voie a sa propre file de spawn indépendante des autres. Seul l'ordre des UNITÉS AU SEIN
+ * D'UNE MÊME VOIE reste dans la clé (relevant si leurs types diffèrent en vitesse) ; compressé par
+ * plages de même type (`rat×23` plutôt que `rat,rat,...,rat`) — sans perte, juste plus court à
+ * construire.
+ */
+export type SimulationCache = Map<string, SimulationSnapshot>;
+
+function towersCacheKey(towers: readonly TowerInstance[]): string {
+  return towers
+    .map((tower) => `${tower.typeId}@${tower.position.x},${tower.position.y}#${tower.level}`)
+    .sort()
+    .join(';');
+}
+
+/** Compresse les unités consécutives de même type (`rat×23`) — préserve l'ordre entre types différents. */
+function runLengthEncodeUnits(units: readonly { type: string }[]): string {
+  const runs: { type: string; count: number }[] = [];
+  for (const unit of units) {
+    const last = runs[runs.length - 1];
+    if (last && last.type === unit.type) {
+      last.count++;
+    } else {
+      runs.push({ type: unit.type, count: 1 });
+    }
+  }
+  return runs.map((run) => `${run.type}×${run.count}`).join(',');
+}
+
+function waveCacheKey(wave: Wave): string {
+  return wave.lanes
+    .map(
+      (lane) => `${lane.path.nodes.map(([x, y]) => `${x},${y}`).join('-')}=${runLengthEncodeUnits(lane.units)}`,
+    )
+    .sort()
+    .join('|');
+}
+
+/** Clé de cache pour un état de simulation — voir `SimulationCache`. */
+export function simulationCacheKey(
+  towers: readonly TowerInstance[],
+  wave: Wave,
+  chateauMaxHp: number,
+  mode: SimulationMode,
+): string {
+  return `${mode}::${chateauMaxHp}::${towersCacheKey(towers)}::${waveCacheKey(wave)}`;
+}
+
+export interface SimulationCacheStats {
+  hits: number;
+  misses: number;
+}
+
+/**
+ * Compteurs hits/misses par cache, à côté (jamais dans) `SimulationCache` : ce dernier reste un
+ * `Map` ordinaire, tel qu'utilisé directement (`.get`/`.set`/`.clear`/`.size`) par `BoardEngineService`
+ * — ajouter des champs dessus aurait changé son type pour tous les appelants existants. `WeakMap` :
+ * les compteurs disparaissent avec le cache, jamais de fuite.
+ */
+const cacheStats = new WeakMap<SimulationCache, SimulationCacheStats>();
+
+function statsFor(cache: SimulationCache): SimulationCacheStats {
+  let stats = cacheStats.get(cache);
+  if (!stats) {
+    stats = { hits: 0, misses: 0 };
+    cacheStats.set(cache, stats);
+  }
+  return stats;
+}
+
+/** Copie défensive des compteurs d'un cache — 0/0 si `runCachedSimulation` n'a encore jamais été appelée avec. */
+export function getSimulationCacheStats(cache: SimulationCache): SimulationCacheStats {
+  return { ...statsFor(cache) };
+}
+
+/** Taux de hits dans `[0, 1]`, ou `undefined` si le cache n'a encore servi à aucun lookup. */
+export function simulationCacheHitRate(cache: SimulationCache): number | undefined {
+  const { hits, misses } = getSimulationCacheStats(cache);
+  const total = hits + misses;
+  return total > 0 ? hits / total : undefined;
+}
+
+/**
+ * Sert le cache s'il y a une entrée, sinon construit/joue une simulation fraîche et mémorise son
+ * résultat. Ne rattrape PAS la non-convergence de `runToCompletion` (`maxTicks` dépassé) — elle se
+ * propage tel quel, comme avant l'introduction du cache : c'est à l'appelant de décider s'il tolère
+ * ce cas.
+ */
+export function runCachedSimulation(
+  towers: readonly TowerInstance[],
+  wave: Wave,
+  chateauMaxHp: number,
+  monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
+  towerCatalog: readonly TowerType[] = TOWER_TYPES,
+  mode: SimulationMode = 'defense',
+  cache?: SimulationCache,
+): SimulationSnapshot {
+  // Ne construit la clé que si un cache est réellement fourni : en jeu réel (pas de cache), cette
+  // fonction est appelée des centaines de fois par décision IA, pas question d'y ajouter le coût
+  // d'un hachage jamais consulté.
+  const key = cache && simulationCacheKey(towers, wave, chateauMaxHp, mode);
+  if (key) {
+    const hit = cache!.get(key);
+    if (hit) {
+      statsFor(cache!).hits++;
+      return hit;
+    }
+    statsFor(cache!).misses++;
+  }
+  const trial = new DefenseSimulation(towers, wave, chateauMaxHp, monsterCatalog, towerCatalog, undefined, mode);
+  trial.runToCompletion();
+  const snapshot: SimulationSnapshot = {
+    outcome: trial.getOutcome() === 'success' ? 'success' : 'failure',
+    breachCount: trial.getBreachCount(),
+    chateauHp: trial.getChateauHp(),
+    tick: trial.getTick(),
+    totalDamageDealt: trial.getTotalDamageDealt(),
+  };
+  if (key) {
+    cache!.set(key, snapshot);
+  }
+  return snapshot;
+}
+
 /**
  * Score d'une épreuve (défense ou attaque), obtenu en rejouant l'épreuve jusqu'à son terme
  * (CONCEPTION.md §12 « Scoring »). Deux régimes distincts :
@@ -1014,23 +1168,26 @@ export function phaseScore(
   monsterCatalog: readonly MonsterType[] = MONSTER_TYPES,
   towerCatalog: readonly TowerType[] = TOWER_TYPES,
   mode: SimulationMode = 'defense',
+  simulationCache?: SimulationCache,
 ): number {
-  const simulation = new DefenseSimulation(
+  // `map` n'entre PAS dans le cache : seule la simulation brute (déterministe, indépendante de
+  // `map`) est mémorisée. `routing`/`routeExposure` ci-dessous, qui dépendent de `map` (tracés déjà
+  // persistés), sont recalculés à chaque appel comme avant — seul le calcul coûteux est évité.
+  const snapshot = runCachedSimulation(
     towers,
     wave,
     chateauMaxHp,
     monsterCatalog,
     towerCatalog,
-    undefined,
     mode,
+    simulationCache,
   );
-  simulation.runToCompletion();
 
   const maxDamage = totalMonsterHp(wave, monsterCatalog);
-  const damageBonus = maxDamage > 0 ? Math.min(1, simulation.getTotalDamageDealt() / maxDamage) : 0;
+  const damageBonus = maxDamage > 0 ? Math.min(1, snapshot.totalDamageDealt / maxDamage) : 0;
 
-  if (simulation.getOutcome() === 'failure') {
-    return simulation.getChateauHp() + damageBonus;
+  if (snapshot.outcome === 'failure') {
+    return snapshot.chateauHp + damageBonus;
   }
   if (mode === 'defense') {
     const routing = routingCosts(map, towers, towerCatalog);
@@ -1039,8 +1196,7 @@ export function phaseScore(
     // meilleure route de l'attaquant, seulement trancher entre deux forteresses qui la laissent
     // identique.
     const tieBreak = routing.harmonic / (1 + routing.harmonic);
-    const merit =
-      CHOKE_WEIGHT * (routing.best + tieBreak) + resolutionSpeedScore(simulation.getTick());
+    const merit = CHOKE_WEIGHT * (routing.best + tieBreak) + resolutionSpeedScore(snapshot.tick);
     return SPREAD_SCORE_BASE + merit + damageBonus;
   }
   // Attaque : le mérite est de s'exposer le moins possible, donc l'opposé de `routeExposure`. Tri

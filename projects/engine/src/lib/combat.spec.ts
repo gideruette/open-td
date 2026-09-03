@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GameMap, GridCoord, MapPath, MonsterType, TowerInstance, TowerType, Wave, WaveLane, WaveUnit } from 'shared';
 import { hexNeighbors, hexToWorld } from 'shared';
 import { DefenseSimulation, attackerRoutingCost, phaseScore, routeExposure, selectTarget, totalChateauDamage, waveCost } from './combat';
+import { buildableCells } from './fortress';
 import { pathCellsCost } from './path';
 
 const p1: MapPath = { id: 'p1', nodes: [[0, 0], [20, 0]] };
@@ -296,6 +297,15 @@ describe('DefenseSimulation', () => {
 
       const walled: GameMap = { ...testMap, rivers: [{ id: 'r', nodes: [[0, 5], [21, 5]] }] };
       expect(routeExposure(walled, exposed, rangedCatalog)).toBeLessThan(before);
+    });
+
+    it('adds persistent tower fire to exposure without changing the empty-board baseline', () => {
+      const exposed = wave(lane([{ type: 'unit' }], p2));
+      const empty = routeExposure(testMap, exposed, rangedCatalog);
+      const placed = [tower({ typeId: 'strong', position: { x: 10, y: 4 } })];
+      expect(routeExposure(testMap, exposed, rangedCatalog, [])).toBe(empty);
+      expect(buildableCells(testMap, placed).size).toBeLessThan(buildableCells(testMap).size);
+      expect(routeExposure(testMap, exposed, rangedCatalog, placed)).toBeGreaterThanOrEqual(empty);
     });
 
     describe('attackerRoutingCost', () => {

@@ -66,21 +66,10 @@ describe('Simulation IA vs IA', () => {
         }
         engine.resolveAttackSuccess(attackWave);
 
-        // La défense repart d'une forteresse vierge, comme le fait le jeu réel : `playDefensePhase`
-        // compose son plan sur un plateau libre avec le **budget total**, et
-        // `BoardDefenseService.applyTowers` efface les tours posées avant d'appliquer ce plan. Sans
-        // cette remise à zéro, le plan se greffait sur la forteresse du palier précédent : les cases
-        // déjà occupées faisaient rejeter les tours qui les visaient, et le budget déjà engagé faisait
-        // rejeter tout le reste dès son épuisement. La défense ne jouait alors jamais le plan qu'elle
-        // avait calculé — mesuré, elle perdait vers le palier 3 au lieu de tenir au-delà du palier 10.
-        engine.resetDefenseSession();
-
-        // Les voies de l'attaque victorieuse sont déjà figées sur la carte par `resolveAttackSuccess`
-        // : leurs cases ne sont plus constructibles, ce qui garantit qu'un couloir libre relie toujours
-        // un bord au château pendant la phase Défense. Rien à matérialiser ici — le faire à la main
-        // ajouterait le même chemin une seconde fois, la garde d'idempotence étant dans le moteur.
+        // Forteresse persistante : `playDefensePhase` reçoit les tours héritées et le budget brut
+        // du palier ; `applyFortressLayout` aligne sans vider le plateau.
         const wave = engine.getVagueCourante() as Wave;
-
+        const inherited = engine.getTowers();
         const towers =
           (await playDefensePhase({
             map: engine.getMap()!,
@@ -88,10 +77,9 @@ describe('Simulation IA vs IA', () => {
             defenseBudget: engine.getDefenseBudget(),
             chateauMaxHp: engine.getChateauMaxHp(),
             maxTime: AI_THINK_TIME_MS,
+            existingTowers: inherited,
           })) ?? [];
-        for (const tower of towers) {
-          engine.placeTower(tower.typeId, tower.position);
-        }
+        engine.applyFortressLayout(towers);
         const defenseTrial = engine.startDefenseTrial();
         const defenseOutcome = defenseTrial.runToCompletion();
         console.log(

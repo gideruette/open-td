@@ -14,18 +14,46 @@
   height: 100%;
   max-width: 90rem;
   margin: 0 auto;
-  padding: 0.5rem clamp(0.5rem, 2vw, 1rem);
+  padding: calc(var(--otd-safe-top, 0px) + 0.5rem) calc(var(--otd-safe-right, 0px) + clamp(0.5rem, 2vw, 1rem))
+    calc(var(--otd-safe-bottom, 0px) + 0.5rem) calc(var(--otd-safe-left, 0px) + clamp(0.5rem, 2vw, 1rem));
   box-sizing: border-box;
   overflow: hidden;
 }
 
 .shell__header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
   min-height: 0;
   flex-shrink: 0;
+}
+
+.shell__menu-toggle {
+  position: relative;
+  z-index: 41;
+  display: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 1px solid #2a2f3a;
+  border-radius: 0.4rem;
+  background: #171a22;
+  color: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+
+  &:hover {
+    border-color: #5fb0ff;
+    background: #1d2a3a;
+  }
+}
+
+.shell__menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
 }
 
 .shell__header h1 {
@@ -41,6 +69,7 @@
 }
 
 .shell__change-map {
+  min-height: 2.5rem;
   padding: 0.35rem 0.6rem;
   border: 1px solid #2a2f3a;
   border-radius: 0.35rem;
@@ -57,8 +86,8 @@
 }
 
 .shell__help {
-  width: 1.85rem;
-  height: 1.85rem;
+  width: 2.5rem;
+  height: 2.5rem;
   padding: 0;
   border: 1px solid #2a2f3a;
   border-radius: 50%;
@@ -76,8 +105,8 @@
 
 .shell__help--floating {
   position: fixed;
-  top: 1.25rem;
-  right: 1.25rem;
+  top: calc(var(--otd-safe-top, 0px) + 1.25rem);
+  right: calc(var(--otd-safe-right, 0px) + 1.25rem);
   z-index: 10;
 }
 
@@ -86,4 +115,60 @@ otd-game-board {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/**
+ * Écran compact (portrait étroit ou paysage bas) : l'en-tête occupe une ligne entière pour 3
+ * boutons peu utilisés. Il se réduit à un bouton ☰ flottant, les actions repliées en popover.
+ * Doit rester APRÈS les règles non conditionnelles ci-dessus : à spécificité égale, une règle
+ * `@media` placée avant elles serait écrasée par leur `display` inconditionnel (ordre source).
+ */
+@media (max-width: 820px), (max-height: 520px) {
+  .shell {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .shell__header {
+    position: fixed;
+    top: var(--otd-safe-top, 0px);
+    right: var(--otd-safe-right, 0px);
+    z-index: 40;
+    padding: 0.6rem;
+    gap: 0;
+  }
+
+  .shell__header h1 {
+    display: none;
+  }
+
+  .shell__menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shell__header-actions {
+    position: absolute;
+    top: 100%;
+    right: 0.6rem;
+    z-index: 40;
+    flex-direction: column;
+    align-items: stretch;
+    margin-top: 0.4rem;
+    padding: 0.5rem;
+    border: 1px solid #2a2f3a;
+    border-radius: 0.6rem;
+    background: #171a22;
+    box-shadow: 0 0.5rem 1.25rem rgba(0, 0, 0, 0.45);
+    display: none;
+  }
+
+  .shell__header-actions--open {
+    display: flex;
+  }
+
+  .shell__change-map,
+  .shell__help {
+    white-space: nowrap;
+  }
 }

@@ -3,6 +3,7 @@
 }
 
 .otd-button {
+  min-height: 2.75rem;
   padding: 0.5rem 0.65rem;
   border: 1px solid #2a2f3a;
   border-radius: 0.35rem;
@@ -23,6 +24,7 @@
 }
 
 .otd-button--sm {
+  min-height: 2.4rem;
   padding: 0.2rem 0.5rem;
   border-radius: 0.25rem;
   font-size: 0.85rem;

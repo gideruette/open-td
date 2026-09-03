@@ -1,4 +1,11 @@
-<div class="board-hud" role="toolbar" aria-label="Commandes de jeu">
+<div
+  #panel
+  class="board-hud"
+  [class.board-hud--rail]="layout.isRailLayout()"
+  [class.board-hud--empty]="!hasContent()"
+  role="toolbar"
+  aria-label="Commandes de jeu"
+>
   @if (phase() === 'attack' && !drawingPath() && !trialRunning() && !isAiAttack()) {
     <div class="board-hud__lane">
       <p class="board-hud__mover">Monstres — {{ currentMoverLabel() }}</p>

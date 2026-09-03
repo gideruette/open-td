@@ -1,5 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { GameEngine } from 'engine';
+import { GameEngine, type SimulationCache } from 'engine';
 import type { GameMap, GamePhase, StartingData, TowerInstance, Wave } from 'shared';
 import { BoardBudgetService } from './board-budget.service';
 
@@ -13,6 +13,15 @@ import { BoardBudgetService } from './board-budget.service';
 export class BoardEngineService {
   /** Instance moteur pure (sans DOM) : les autres services l'utilisent pour leurs actions. */
   readonly engine = new GameEngine();
+
+  /**
+   * Cache des résultats de simulation (voir `SimulationCache` dans `combat.ts`), partagé entre
+   * `BoardLanesService` (IA Attaque) et `BoardDefenseService` (IA Défense) sur toute la durée
+   * d'une run : deux tours IA qui retombent sur la même forteresse/vague concrète (même budget,
+   * même disposition) évitent de rejouer la simulation. Vidé à chaque `startRun` — une nouvelle
+   * run peut changer de carte/catalogue, sur quoi ce cache n'a aucune garantie de validité.
+   */
+  readonly simulationCache: SimulationCache = new Map();
 
   private readonly budget = inject(BoardBudgetService);
 
@@ -32,6 +41,7 @@ export class BoardEngineService {
 
   /** Démarre une nouvelle run sur la carte donnée et synchronise l'état réactif. */
   startRun(map: GameMap, startingData: StartingData): void {
+    this.simulationCache.clear();
     this.engine.startRun(map, startingData);
     this.refresh();
   }

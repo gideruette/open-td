@@ -135,10 +135,20 @@ export interface GameMap {
   rivers?: MapPath[];
 }
 
-/** Croissance des budgets appliquée après chaque attaque réussie. */
+/**
+ * Relance réciproque des budgets (CONCEPTION.md §8) : chaque nouveau budget dépasse le dernier
+ * budget du camp adverse d'une marge qui grandit de `marginStep` à chaque relance (attaque OU
+ * défense, pas par palier complet) — ex. `initialMargin=5, marginStep=5` donne 10, 15, 25, 40, 65...
+ * en partant d'un budget d'attaque de départ de 10. Remplace un taux de croissance constant par
+ * camp : un écart constant s'accumule linéairement et finit toujours par devenir écrasant sur une
+ * partie assez longue, alors que cette marge, bien que croissante en valeur absolue, devient
+ * proportionnellement négligeable face aux budgets eux-mêmes (`margin_n / b_n → 0`).
+ */
 export interface BudgetGrowth {
-  defense: number;
-  attack: number;
+  /** Marge de la toute première relance (palier 1 → défense). */
+  initialMargin: number;
+  /** Croissance de la marge à chaque relance ultérieure. */
+  marginStep: number;
 }
 
 /** Données de départ d'une run : budgets initiaux (voir CONCEPTION.md §8). */
