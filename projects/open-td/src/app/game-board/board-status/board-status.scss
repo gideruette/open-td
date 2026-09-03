@@ -54,12 +54,16 @@
   flex-shrink: 0;
 }
 
-/** Cluster d'actions flottant bas-droite (zone du pouce) ; décalé via `--extra-right/--extra-bottom` pour éviter le HUD. */
+/**
+ * Cluster d'actions flottant bas-droite (zone du pouce) ; décalé via `--extra-right/--extra-bottom`
+ * pour éviter le HUD. Doit rester au-dessus du HUD inférieur (z-index: 25, cf. board-hud.scss),
+ * sinon le HUD masque la popup de confirmation du bouton reset.
+ */
 .board-status__actions {
   position: absolute;
   right: calc(var(--otd-safe-right, 0px) + 0.6rem + var(--extra-right, 0px));
   bottom: calc(var(--otd-safe-bottom, 0px) + 0.6rem + var(--extra-bottom, 0px));
-  z-index: 25;
+  z-index: 30;
   display: flex;
   flex-direction: column-reverse;
   align-items: center;
